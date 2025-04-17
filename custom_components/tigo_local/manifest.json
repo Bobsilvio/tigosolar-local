@@ -1,0 +1,10 @@
+{
+  "domain": "tigo",
+  "name": "Tigo Local",
+  "version": "1.0.0",
+  "config_flow": true,
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": ["@Bobsilvio"],
+  "documentation": "https://github.com/Bobsilvio/tigosolar-local",
+}
