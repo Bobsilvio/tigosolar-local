@@ -1,0 +1,19 @@
+{
+  "name": "tigosolar",
+  "version": "1.0.0",
+  "description": "Home Assistant custom integration for Tigo Energy solar monitoring",
+  "main": "sensor.py",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bobsilvio/tigosolar-local"
+  },
+  "keywords": [
+    "home-assistant",
+    "tigo",
+    "solar",
+    "energy",
+    "integration"
+  ],
+  "author": "Bobsilvio",
+  "license": "MIT"
+}
