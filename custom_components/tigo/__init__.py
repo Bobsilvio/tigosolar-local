@@ -3,6 +3,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from datetime import timedelta
+from homeassistant.const import CONF_IP_ADDRESS
 
 from .const import DOMAIN
 from .tigo_api import fetch_tigo_data_from_ip
@@ -11,7 +12,7 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(seconds=60)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    ip_address = entry.data["ip"]
+    ip_address = entry.options.get(CONF_IP_ADDRESS, entry.data[CONF_IP_ADDRESS])
 
     async def update_method():
         return await hass.async_add_executor_job(fetch_tigo_data_from_ip, ip_address)

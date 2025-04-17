@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Tigo Setup",
+        "description": "Enter the local IP of your Tigo CCA.",
+        "data": {
+          "ip_address": "IP Address"
+        }
+      }
+    },
+    "error": {
+      "invalid_ip": "Invalid IP address format."
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Configurazione Tigo",
+        "description": "Inserisci l'indirizzo IP locale del tuo Tigo CCA (es. 192.168.1.100)",
+        "data": {
+          "ip_address": "Indirizzo IP"
+        }
+      }
+    },
+    "error": {
+      "invalid_ip": "Formato dell'indirizzo IP non valido."
+    }
+  }
+}
