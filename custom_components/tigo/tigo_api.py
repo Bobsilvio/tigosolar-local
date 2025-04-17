@@ -49,13 +49,14 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
                         if entry.get("d"):
                             for i, panel in enumerate(current_order):
                                 if i < len(entry["d"]):
+                                    raw_value = entry["d"][i]
                                     try:
-                                        value = float(entry["d"][i])
+                                        value = float(raw_value)
                                     except (TypeError, ValueError):
-                                        value = None
+                                        value = 0 
                                     panel_data.setdefault(panel, {})[temp.capitalize()] = value
-                                    
                             break
+            
                 if panel_data:
                     break
 
@@ -65,13 +66,16 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
 
     for panel, values in panel_data.items():
         try:
-            vin = float(values.get("Vin"))
-            pin = float(values.get("Pin"))
+            vin = float(values.get("Vin", 0))
+            pin = float(values.get("Pin", 0))
             if vin > 0:
                 values["Iin"] = round(pin / vin, 2)
+            else:
+                values["Iin"] = 0
         except (TypeError, ValueError):
             _LOGGER.debug(f"Valori non validi per corrente su {panel}: Vin={values.get('Vin')}, Pin={values.get('Pin')}")
-            continue
+            values["Iin"] = 0
+    
     
 
     return panel_data
