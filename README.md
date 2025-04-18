@@ -15,10 +15,7 @@ To be added when available via HACS.
 [![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bobsilvio&repository=tigosolar-local&category=integration)
 
 ## MANUAL
-1. Copy the `tigo_local` directory into:
-
-/config/custom_components/
-
+1. Copy the `tigo` directory into: /config/custom_components/
 
 2. Restart Home Assistant.
 
