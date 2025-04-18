@@ -124,15 +124,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     async def fetch_energy_data():
         raw = await hass.async_add_executor_job(fetch_daily_energy, ip_address)
+        _LOGGER.debug(f"Risultato da fetch_daily_energy: {raw}")
+        
         history_list = raw.get("history", [])
-        last_day = history_list[-1][1] if history_list else None
-        last_7_days = sum(val for _, val in history_list[-7:]) if history_list else None
+
+        today_energy = history_list[-1][1] if len(history_list) >= 1 else 0
+        yesterday_energy = history_list[-2][1] if len(history_list) >= 2 else 0
+        last_7_days = sum(val for _, val in history_list[-8:-1]) if len(history_list) >= 2 else 0
+
         return {
-            "yesterday_energy": last_day,
+            "today_energy": today_energy,
+            "yesterday_energy": yesterday_energy,
             "weekly_energy": last_7_days,
             "history": history_list,
         }
-    
 
     system_coordinator = DataUpdateCoordinator(
         hass,
@@ -143,6 +148,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     )
 
     await system_coordinator.async_config_entry_first_refresh()
+
+    entities.append(
+        TigoSystemSensor(
+            "Tigo Today Energy",
+            "today_energy",
+            UnitOfEnergy.WATT_HOUR,
+            "tigo_system_today",
+            system_coordinator,
+        )
+    )
 
     entities.append(
         TigoSystemSensor(

@@ -1,5 +1,5 @@
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import time
 
@@ -53,7 +53,7 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
                                     try:
                                         value = float(raw_value)
                                     except (TypeError, ValueError):
-                                        value = 0 
+                                        value = 0  # Sostituiamo '-' o valori invalidi con 0.0
                                     panel_data.setdefault(panel, {})[temp.capitalize()] = value
                             break
             
@@ -141,22 +141,62 @@ def fetch_tigo_energy_history(ip: str) -> list[dict]:
         return []
 
 def fetch_daily_energy(ip: str) -> dict:
-    url = f"http://{ip}/cgi-bin/summary_energy"
+    base_url = f"http://{ip}/cgi-bin/summary_data"
+    today = datetime.now().date()
+    history = []
+    daily_energy = 0.0
 
-    try:
-        response = requests.get(url, headers=AUTH_HEADER, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-    except Exception as e:
-        _LOGGER.warning(f"Errore nel recupero della produzione giornaliera da {url}: {e}")
-        return {"daily_energy": 0, "history": []}
+    def get_day_energy(date_str: str) -> float:
+        try:
+            params = {"date": date_str, "temp": "pin", "_": int(time.time())}
+            r = requests.get(base_url, headers=AUTH_HEADER, params=params, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+            dataset = data.get("dataset", [])
 
-    history = data[-7:] if len(data) >= 7 else data
-    today = datetime.now().date().isoformat()
-    today_value = next((v[1] for v in reversed(data) if v[0] == today), 0)
+            total_wh = 0
+            for block in dataset:
+                for entry in block.get("data", []):
+                    values = entry.get("d", [])
+                    minute_sum = sum(
+                        float(v) for v in values
+                        if isinstance(v, (int, float, str)) and str(v).replace('.', '', 1).isdigit()
+                    )
+                    total_wh += minute_sum / 60  # Wh per minuto
+
+            return round(total_wh / 1000, 2)  # kWh
+        except Exception as e:
+            _LOGGER.warning(f"Errore nel recupero dei dati per {date_str}: {e}")
+            return 0.0
+
+    for i in range(6, -1, -1):
+        date_obj = today - timedelta(days=i)
+        date_str = date_obj.isoformat()
+        is_today = date_obj == today
+        is_midnight = datetime.now().hour == 0
+
+        energy = get_day_energy(date_str)
+        if not is_today and not is_midnight and energy == 0:
+            _LOGGER.debug(f"Valore 0 per {date_str}, provo a ricalcolare (HA riavviato?)")
+            energy = get_day_energy(date_str)
+
+        history.append([date_str, energy])
+        if is_today:
+            daily_energy = energy
+    
+    
+
+    today_energy = history[-1][1] if history else 0
+    yesterday_energy = history[-2][1] if len(history) >= 2 else 0
+    weekly_energy = sum(val for _, val in history[-8:-1]) if len(history) >= 2 else 0
 
     return {
-        "daily_energy": today_value,
-        "history": history
+        "today_energy": today_energy,
+        "yesterday_energy": yesterday_energy,
+        "weekly_energy": weekly_energy,
+        "history": history,
     }
+
+    
+
 
