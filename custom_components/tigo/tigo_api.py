@@ -215,7 +215,27 @@ def fetch_daily_energy(ip: str) -> dict:
     }
     
     
+def fetch_device_info(ip: str) -> dict:
+    try:
+        url = f"http://{ip}/cgi-bin/mobile_api?cmd=DEVICE_INFO"
+        r = requests.get(url, headers=AUTH_HEADER, timeout=10)
+        r.raise_for_status()
+        data = r.json()
 
-    
+        status_entries = {item["name"]: item["status"] for item in data.get("status", [])}
+        readable_status = {
+            "serial": data.get("serial"),
+            "software": data.get("software"),
+            "sysid": data.get("sysid"),
+            "last_data_sync": next((k for k in status_entries if "Last Data Sync" in k), None),
+            "discovery": next((k for k in status_entries if "Discovery" in k), None),
+            "kernel": next((k for k in status_entries if "Kernel" in k), None),
+#            "cloud": status_entries.get("Cloud Connection"),
+#            "gateway": status_entries.get("Gateway Communication"),
+#            "modules": status_entries.get("Modules Communication"),
+        }
 
-
+        return readable_status
+    except Exception as e:
+        _LOGGER.warning(f"Errore nel recupero device info: {e}")
+        return {}

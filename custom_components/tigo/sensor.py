@@ -9,9 +9,9 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Coor
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers import device_registry as dr
 import calendar
-    
+
 from .const import DOMAIN
-from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_layout_from_ip, fetch_daily_energy
+from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_layout_from_ip, fetch_daily_energy, fetch_device_info
 
 from homeassistant.const import (
     UnitOfPower,
@@ -125,20 +125,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     async def fetch_energy_data():
         raw = await hass.async_add_executor_job(fetch_daily_energy, ip_address)
-        _LOGGER.debug(f"Risultato da fetch_daily_energy: {raw}")
+        device_info = await hass.async_add_executor_job(fetch_device_info, ip_address)
         
-        history_list = raw.get("history", [])
+        _LOGGER.debug(f"Risultato da fetch_daily_energy: {raw}")
 
-        today_energy = history_list[-1][1] if len(history_list) >= 1 else 0
-        yesterday_energy = history_list[-2][1] if len(history_list) >= 2 else 0
-        last_7_days = sum(val for _, val in history_list[-8:-1]) if len(history_list) >= 2 else 0
+        history = raw.get("history", [])
+        today_energy = raw.get("today_energy", 0)
+        yesterday_energy = raw.get("yesterday_energy", 0)
+        weekly_energy = raw.get("weekly_energy", 0)
+
+        today = datetime.now().date().isoformat()
+        previous_days = [(d, v) for d, v in history if d != today]
+
+        history_weekly_named = {
+            f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
+            for d, v in previous_days[-7:]
+        }
 
         return {
             "today_energy": today_energy,
             "yesterday_energy": yesterday_energy,
-            "weekly_energy": last_7_days,
-            "history": history_list,
+            "weekly_energy": weekly_energy,
+            "history": history,
+            "history_weekly_named": history_weekly_named,
+            **device_info
         }
+    
+        
 
     system_coordinator = DataUpdateCoordinator(
         hass,
@@ -179,7 +192,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             system_coordinator,
         )
     )
+    
+    system_keys = [
+        ("serial", "Tigo Serial", None, "mdi:identifier"),
+        ("software", "Tigo Software", None, "mdi:chip"),
+        ("kernel", "Tigo Kernel", None, "mdi:linux"),
+        ("discovery", "Tigo Discovery", None, "mdi:radar"),
+        ("last_data_sync", "Tigo Last Sync", None, "mdi:clock-sync"),
+#        ("cloud", "Tigo Cloud Status", None, "mdi:cloud"),
+#        ("gateway", "Tigo Gateway Status", None, "mdi:router-network"),
+#        ("modules", "Tigo Modules Status", None, "mdi:solar-panel"),
+    ]
+    
 
+    for key, name, device_class, icon in system_keys:
+        entities.append(
+            TigoSystemSensor(
+                name=name,
+                key=key,
+                unit=None,
+                unique_id=f"tigo_system_{key}",
+                coordinator=system_coordinator,
+                device_class=device_class,
+            )
+        )
+        
     device_registry = dr.async_get(hass)
     device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -188,7 +225,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         name="Tigo Local System",
         model="Gateway",
     )
-
+    
     async_add_entities(entities)
 
 
@@ -271,19 +308,25 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
 
 
 class TigoSystemSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, name, key, unit, unique_id, coordinator):
+    def __init__(self, name, key, unit, unique_id, coordinator, device_class=None, icon=None):
         super().__init__(coordinator)
         self._attr_name = name
         self._attr_unique_id = unique_id
         self._attr_native_unit_of_measurement = unit
         self._key = key
-        self._attr_device_class = SensorDeviceClass.ENERGY
-        self._attr_state_class = SensorStateClass.TOTAL
+        self._attr_device_class = device_class
+        self._attr_icon = icon
+
+        # Assegna state_class solo se è energia
+        if device_class == SensorDeviceClass.ENERGY:
+            self._attr_state_class = SensorStateClass.TOTAL
+
         self._attr_device_info = {
             "identifiers": {(DOMAIN, "tigo_system")},
             "name": "Tigo Local System",
             "manufacturer": "Tigo",
         }
+
 
     @property
     def native_value(self):
@@ -293,18 +336,17 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         raw_history = self.coordinator.data.get("history", [])
-        today = datetime.now().date().isoformat()
+        weekly_energy = self.coordinator.data.get("weekly_energy", 0)
 
-        # Filtra giorni precedenti a oggi
+        today = datetime.now().date().isoformat()
         previous_days = [(d, v) for d, v in raw_history if d != today]
 
-        # Ultimi 7 giorni, con nome del giorno
         history_weekly_named = {
             f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
             for d, v in previous_days[-7:]
         }
 
         return {
-            "history_weekly_named": history_weekly_named
+            "weekly_energy": weekly_energy,
+            "history_weekly_named": history_weekly_named,
         }
-    
