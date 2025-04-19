@@ -1,6 +1,6 @@
 from __future__ import annotations
 import logging
-from datetime import timedelta
+from datetime import timedelta, datetime
 from homeassistant.core import HomeAssistant
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -8,7 +8,8 @@ from homeassistant.helpers.device_registry import async_get
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers import device_registry as dr
-
+import calendar
+    
 from .const import DOMAIN
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_layout_from_ip, fetch_daily_energy
 
@@ -171,7 +172,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     entities.append(
         TigoSystemSensor(
-            "Tigo Last 7 Days Energy",
+            "Tigo Last 6 Days Energy",
             "weekly_energy",
             UnitOfEnergy.WATT_HOUR,
             "tigo_system_weekly",
@@ -288,6 +289,22 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         return self.coordinator.data.get(self._key)
 
+
     @property
     def extra_state_attributes(self):
-        return self.coordinator.data.get("history", {})
+        raw_history = self.coordinator.data.get("history", [])
+        today = datetime.now().date().isoformat()
+
+        # Filtra giorni precedenti a oggi
+        previous_days = [(d, v) for d, v in raw_history if d != today]
+
+        # Ultimi 7 giorni, con nome del giorno
+        history_weekly_named = {
+            f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
+            for d, v in previous_days[-7:]
+        }
+
+        return {
+            "history_weekly_named": history_weekly_named
+        }
+    

@@ -183,19 +183,38 @@ def fetch_daily_energy(ip: str) -> dict:
         history.append([date_str, energy])
         if is_today:
             daily_energy = energy
-    
-    
 
-    today_energy = history[-1][1] if history else 0
-    yesterday_energy = history[-2][1] if len(history) >= 2 else 0
-    weekly_energy = sum(val for _, val in history[-8:-1]) if len(history) >= 2 else 0
+    today_str = today.isoformat()
+    today_energy = 0
+    previous_days = []
+
+    for date_str, value in history:
+        if date_str.strip() == today_str:
+            today_energy = value
+        else:
+            previous_days.append((date_str, value))
+    
+    yesterday_energy = previous_days[-1][1] if len(previous_days) >= 1 else 0
+    _LOGGER.debug(f"Filtrati per weekly_energy: {[d for d, _ in previous_days[-7:]]}")
+    weekly_energy = sum(val for _, val in previous_days[-7:])
+    
+    import calendar
+
+    history_named = {
+        f"{date_str} ({calendar.day_name[datetime.strptime(date_str, '%Y-%m-%d').weekday()]})": value
+        for date_str, value in history
+    }
+    
 
     return {
         "today_energy": today_energy,
         "yesterday_energy": yesterday_energy,
         "weekly_energy": weekly_energy,
         "history": history,
+        "history_named": history_named,
     }
+    
+    
 
     
 
