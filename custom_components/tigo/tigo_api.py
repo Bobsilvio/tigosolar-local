@@ -188,15 +188,11 @@ def fetch_daily_energy(ip: str) -> dict:
     today_energy = 0
     previous_days = []
 
-    for date_str, value in history:
-        if date_str.strip() == today_str:
-            today_energy = value
-        else:
-            previous_days.append((date_str, value))
-    
-    yesterday_energy = previous_days[-1][1] if len(previous_days) >= 1 else 0
-    _LOGGER.debug(f"Filtrati per weekly_energy: {[d for d, _ in previous_days[-7:]]}")
-    weekly_energy = sum(val for _, val in previous_days[-7:])
+    weekly_energy = sum(val for _, val in history[-7:])
+
+    # Riassegna today/yesterday come prima
+    today_energy = history[-1][1] if len(history) >= 1 else 0
+    yesterday_energy = history[-2][1] if len(history) >= 2 else 0
     
     import calendar
 

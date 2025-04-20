@@ -134,12 +134,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         yesterday_energy = raw.get("yesterday_energy", 0)
         weekly_energy = raw.get("weekly_energy", 0)
 
-        today = datetime.now().date().isoformat()
-        previous_days = [(d, v) for d, v in history if d != today]
+#        today = datetime.now().date().isoformat()
+#        previous_days = [(d, v) for d, v in history if d != today]
 
         history_weekly_named = {
             f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
-            for d, v in previous_days[-7:]
+            for d, v in history[-7:]
         }
 
         return {
@@ -165,7 +165,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     entities.append(
         TigoSystemSensor(
-            "Tigo Today Energy",
+            "Tigo Today Production",
             "today_energy",
             UnitOfEnergy.WATT_HOUR,
             "tigo_system_today",
@@ -175,7 +175,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     entities.append(
         TigoSystemSensor(
-            "Tigo Yesterday Energy",
+            "Tigo Yesterday Production",
             "yesterday_energy",
             UnitOfEnergy.WATT_HOUR,
             "tigo_system_yesterday",
@@ -185,7 +185,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     entities.append(
         TigoSystemSensor(
-            "Tigo Last 6 Days Energy",
+            "Tigo Last 7 Days Production",
             "weekly_energy",
             UnitOfEnergy.WATT_HOUR,
             "tigo_system_weekly",
@@ -338,12 +338,12 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
         raw_history = self.coordinator.data.get("history", [])
         weekly_energy = self.coordinator.data.get("weekly_energy", 0)
 
-        today = datetime.now().date().isoformat()
-        previous_days = [(d, v) for d, v in raw_history if d != today]
+#        today = datetime.now().date().isoformat()
+#        previous_days = [(d, v) for d, v in raw_history if d != today]
 
         history_weekly_named = {
             f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
-            for d, v in previous_days[-7:]
+            for d, v in raw_history[-7:]
         }
 
         return {
