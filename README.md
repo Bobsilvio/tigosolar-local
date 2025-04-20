@@ -26,6 +26,12 @@ To be added when available via HACS.
 > ⚠️ Do **not** include `http://` or use hostnames like `tigo.local`.
 
 ---
+## Image
+<img src="images/1.png" alt="Tigo1" width="450"/> <img src="images/2.png" alt="Tigo2" width="450"/>
+<img src="images/3.png" alt="Tigo3" width="450"/> <img src="images/4.png" alt="Tigo4" width="450"/>
+
+
+---
 ## 📦 Features
 
 - Connects locally to your Tigo CCA via its IP address.
