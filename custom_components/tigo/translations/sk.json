@@ -1,0 +1,16 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Konfigurácia Tigo Integrácie",
+        "description": "Vložte lokálnu IP adresu vášho Tigo CCA.",
+        "data": {
+          "ip_address": "IP adresa"
+        }
+      }
+    },
+    "error": {
+      "invalid_ip": "Nesprávny formát IP adresy."
+    }
+  }
+}
