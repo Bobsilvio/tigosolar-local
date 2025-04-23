@@ -6,5 +6,6 @@
   "requirements": [],
   "dependencies": [],
   "codeowners": ["@Bobsilvio"],
-  "documentation": "https://github.com/Bobsilvio/tigosolar-local"
+  "documentation": "https://github.com/Bobsilvio/tigosolar-local",
+  "issue_tracker": "https://github.com/Bobsilvio/tigosolar-local/issues",
 }
