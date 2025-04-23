@@ -1,11 +1,13 @@
 {
   "domain": "tigo",
   "name": "Tigo Local",
-  "version": "1.0.5",
-  "config_flow": true,
-  "requirements": [],
-  "dependencies": [],
   "codeowners": ["@Bobsilvio"],
-  "documentation": "https://github.com/Bobsilvio/tigosolar-local",
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/Bobsilvio/tigosolar-local/",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/Bobsilvio/tigosolar-local/issues",
-}
+  "loggers": ["epcube"],
+  "requirements": [],
+  "version": "1.0.6"
+} 
