@@ -167,7 +167,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TigoSystemSensor(
             "Tigo Today Production",
             "today_energy",
-            UnitOfEnergy.WATT_HOUR,
+            UnitOfEnergy.KILO_WATT_HOUR,
             "tigo_system_today",
             system_coordinator,
         )
@@ -177,7 +177,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TigoSystemSensor(
             "Tigo Yesterday Production",
             "yesterday_energy",
-            UnitOfEnergy.WATT_HOUR,
+            UnitOfEnergy.KILO_WATT_HOUR,
             "tigo_system_yesterday",
             system_coordinator,
         )
@@ -187,7 +187,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TigoSystemSensor(
             "Tigo Last 7 Days Production",
             "weekly_energy",
-            UnitOfEnergy.WATT_HOUR,
+            UnitOfEnergy.KILO_WATT_HOUR,
             "tigo_system_weekly",
             system_coordinator,
         )
