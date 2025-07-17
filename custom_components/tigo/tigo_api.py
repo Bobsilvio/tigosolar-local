@@ -24,19 +24,25 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
         try:
             params = {"date": date, "temp": "pin", "_": int(time.time())}
             r = requests.get(base_url, headers=AUTH_HEADER, params=params, timeout=10)
+            r.raise_for_status()
             dataset = r.json().get("dataset", [])
             if dataset and "order" in dataset[0]:
                 return dataset[0]["order"]
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+            _LOGGER.info("Tigo non raggiungibile (timeout): probabile standby notturno")
         except Exception as e:
             _LOGGER.warning(f"Errore nel recupero dell'ordine pannelli: {e}")
         return []
 
     panel_order = fetch_panel_order()
+    if not panel_order:
+        return {}  # gateway non disponibile → salta il resto
 
     for temp in temps:
         try:
             params = {"date": date, "temp": temp, "_": int(time.time())}
             r = requests.get(base_url, headers=AUTH_HEADER, params=params, timeout=10)
+            r.raise_for_status()
             data = r.json()
             dataset = data.get("dataset", [])
             if not dataset:
@@ -53,13 +59,14 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
                                     try:
                                         value = float(raw_value)
                                     except (TypeError, ValueError):
-                                        value = 0  # Sostituiamo '-' o valori invalidi con 0.0
+                                        value = 0
                                     panel_data.setdefault(panel, {})[temp.capitalize()] = value
                             break
-            
                 if panel_data:
                     break
 
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+            _LOGGER.info(f"Tigo non risponde a '{temp}' (timeout): standby notturno")
         except Exception as e:
             _LOGGER.warning(f"Errore {temp}: {e}")
             continue
@@ -68,15 +75,10 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
         try:
             vin = float(values.get("Vin", 0))
             pin = float(values.get("Pin", 0))
-            if vin > 0:
-                values["Iin"] = round(pin / vin, 2)
-            else:
-                values["Iin"] = 0
+            values["Iin"] = round(pin / vin, 2) if vin > 0 else 0
         except (TypeError, ValueError):
             _LOGGER.debug(f"Valori non validi per corrente su {panel}: Vin={values.get('Vin')}, Pin={values.get('Pin')}")
             values["Iin"] = 0
-    
-    
 
     return panel_data
 
@@ -84,9 +86,13 @@ def fetch_tigo_layout_from_ip(ip: str) -> dict:
     try:
         url = f"http://{ip}/cgi-bin/summary_config"
         response = requests.get(url, headers=AUTH_HEADER, timeout=10)
+        response.raise_for_status()
         data = response.json()
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+        _LOGGER.info("Tigo non raggiungibile (timeout) per layout: standby notturno")
+        return {}
     except Exception as e:
-        _LOGGER.error(f"Errore layout: {e}")
+        _LOGGER.warning(f"Errore layout: {e}")
         return {}
 
     objects = {o["id"]: o for o in data if isinstance(o, dict) and "id" in o}
@@ -134,8 +140,12 @@ def fetch_tigo_energy_history(ip: str) -> list[dict]:
     try:
         url = f"http://{ip}/cgi-bin/summary_energy"
         response = requests.get(url, headers=AUTH_HEADER, timeout=10)
+        response.raise_for_status()
         data = response.json()
         return [{"date": d[0], "energy_wh": d[1]} for d in data if isinstance(d, list) and len(d) == 2]
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+        _LOGGER.info("Tigo non raggiungibile (timeout) per energy_history: standby notturno")
+        return []
     except Exception as e:
         _LOGGER.warning(f"Errore fetch_tigo_energy_history: {e}")
         return []
@@ -165,6 +175,9 @@ def fetch_daily_energy(ip: str) -> dict:
                     total_wh += minute_sum / 60  # Wh per minuto
 
             return round(total_wh / 1000, 2)  # kWh
+        except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+            _LOGGER.info(f"Tigo non raggiungibile (timeout) per energy del {date_str}: standby notturno")
+            return 0.0
         except Exception as e:
             _LOGGER.warning(f"Errore nel recupero dei dati per {date_str}: {e}")
             return 0.0
@@ -226,12 +239,12 @@ def fetch_device_info(ip: str) -> dict:
             "last_data_sync": next((k for k in status_entries if "Last Data Sync" in k), None),
             "discovery": next((k for k in status_entries if "Discovery" in k), None),
             "kernel": next((k for k in status_entries if "Kernel" in k), None),
-#            "cloud": status_entries.get("Cloud Connection"),
-#            "gateway": status_entries.get("Gateway Communication"),
-#            "modules": status_entries.get("Modules Communication"),
         }
 
         return readable_status
+    except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
+        _LOGGER.info("Tigo non raggiungibile (timeout) per device info: standby notturno")
+        return {}
     except Exception as e:
         _LOGGER.warning(f"Errore nel recupero device info: {e}")
         return {}

@@ -335,11 +335,8 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        raw_history = self.coordinator.data.get("history", [])
+        raw_history = self.coordinator.data.get("history") or []
         weekly_energy = self.coordinator.data.get("weekly_energy", 0)
-
-#        today = datetime.now().date().isoformat()
-#        previous_days = [(d, v) for d, v in raw_history if d != today]
 
         history_weekly_named = {
             f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
