@@ -25,6 +25,7 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
             params = {"date": date, "temp": "pin", "_": int(time.time())}
             r = requests.get(base_url, headers=AUTH_HEADER, params=params, timeout=10)
             r.raise_for_status()
+            _LOGGER.debug(f"fetch_panel_order response: {r.text}")
             dataset = r.json().get("dataset", [])
             if dataset and "order" in dataset[0]:
                 return dataset[0]["order"]
@@ -36,7 +37,7 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
 
     panel_order = fetch_panel_order()
     if not panel_order:
-        return {}  # gateway non disponibile → salta il resto
+        return None 
 
     for temp in temps:
         try:
@@ -80,7 +81,7 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
             _LOGGER.debug(f"Valori non validi per corrente su {panel}: Vin={values.get('Vin')}, Pin={values.get('Pin')}")
             values["Iin"] = 0
 
-    return panel_data
+    return panel_data if panel_data else None
 
 def fetch_tigo_layout_from_ip(ip: str) -> dict:
     try:
