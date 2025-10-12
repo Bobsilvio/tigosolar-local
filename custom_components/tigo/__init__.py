@@ -20,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        name="Tigo Panel Data",
+        name=f"Tigo Panel Data ({ip_address})",
         update_method=update_method,
         update_interval=SCAN_INTERVAL,
     )
