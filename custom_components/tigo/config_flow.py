@@ -13,6 +13,7 @@ from .const import DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
+DATA_SOURCE = ["CCA", "ESP32_WS"]
 
 class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -22,19 +23,23 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             ip_input = user_input.get(CONF_IP_ADDRESS, "")
+            source = user_input.get("source", "CCA")
             try:
-                ipaddress.ip_address(ip_input)
-                unique_id = f"tigo_{ip_input.replace('.', '_')}"
+                import ipaddress
+                ipaddress.ip_address(ip_input)  # validazione IP solo per CCA/ESP32 IP
+                unique_id = f"tigo_{ip_input.replace('.', '_')}_{source}"
                 await self.async_set_unique_id(unique_id, raise_on_progress=False)
 
-                # Controlla se già configurato
                 for entry in self._async_current_entries():
                     if entry.unique_id == unique_id:
                         return self.async_abort(reason="already_configured")
-                
+
                 return self.async_create_entry(
-                    title=f"Tigo @ {ip_input}",
-                    data={CONF_IP_ADDRESS: ip_input},
+                    title=f"Tigo @ {ip_input} ({source})",
+                    data={
+                        CONF_IP_ADDRESS: ip_input,
+                        "source": source
+                    },
                 )
             except ValueError:
                 errors[CONF_IP_ADDRESS] = "invalid_ip"
@@ -43,12 +48,14 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema({
                 vol.Required(CONF_IP_ADDRESS): str,
+                vol.Required("source", default="CCA"): vol.In(DATA_SOURCE),
             }),
             errors=errors,
             description_placeholders={
-                "ip_info": "Inserisci l'indirizzo IP interno del tuo Tigo CCA (es. 192.168.1.100)"
+                "ip_info": "Inserisci l'indirizzo IP interno del tuo Tigo o ESP32 (es. 192.168.1.100)"
             },
         )
+    
     
     @staticmethod
     @callback
@@ -63,16 +70,16 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
     async def async_step_init(self, user_input=None):
         errors = {}
 
-        current_ip = self._config_entry.options.get(
-            CONF_IP_ADDRESS,
-            self._config_entry.data.get(CONF_IP_ADDRESS, "")
-        )
+        current_ip = self._config_entry.options.get(CONF_IP_ADDRESS, self._config_entry.data.get(CONF_IP_ADDRESS, ""))
+        current_source = self._config_entry.options.get("source", self._config_entry.data.get("source", "CCA"))
 
         if user_input is not None:
             ip_input = user_input.get(CONF_IP_ADDRESS, "")
+            source = user_input.get("source", "CCA")
             try:
+                import ipaddress
                 ipaddress.ip_address(ip_input)
-                return self.async_create_entry(title="", data={CONF_IP_ADDRESS: ip_input})
+                return self.async_create_entry(title="", data={CONF_IP_ADDRESS: ip_input, "source": source})
             except ValueError:
                 errors[CONF_IP_ADDRESS] = "invalid_ip"
 
@@ -80,6 +87,8 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
             step_id="init",
             data_schema=vol.Schema({
                 vol.Required(CONF_IP_ADDRESS, default=current_ip): str,
+                vol.Required("source", default=current_source): vol.In(DATA_SOURCE),
             }),
             errors=errors,
         )
+    

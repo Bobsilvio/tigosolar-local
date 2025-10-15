@@ -2,6 +2,8 @@ import requests
 from datetime import datetime, timedelta
 import logging
 import time
+import websocket
+import json
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -11,6 +13,35 @@ AUTH_HEADER = {
     "Accept": "*/*",
     "User-Agent": "Mozilla/5.0"
 }
+
+def fetch_tigo_data_from_ws(ws_url: str) -> dict:
+    """Legge i dati dal WS e li restituisce come dict {panel_id: {...}}"""
+    try:
+        ws = websocket.create_connection(ws_url, timeout=5)
+        raw = ws.recv()
+        ws.close()
+
+        data_list = json.loads(raw)  # lista di moduli
+        panel_data = {}
+        for mod in data_list:
+            panel_id = mod.get("id")
+            if panel_id:
+                panel_data[panel_id] = {
+                    "Pin": mod.get("watt", 0),
+                    "Vin": mod.get("vin", 0),
+                    "Vout": mod.get("vout", 0),
+                    "Iin": mod.get("amp", 0),
+                    "Temp": mod.get("temp", 0),
+                    "Rssi": mod.get("rssi", 0)
+                }
+
+        return panel_data
+
+    except Exception as e:
+        _LOGGER.warning(f"Errore WS fetch: {e}")
+        return {}  # <-- MAI None, sempre dict
+
+
 
 def fetch_tigo_data_from_ip(ip: str) -> dict:
     base_url = f"http://{ip}/cgi-bin/summary_data"
@@ -37,7 +68,7 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
 
     panel_order = fetch_panel_order()
     if not panel_order:
-        return None 
+        return {}
 
     for temp in temps:
         try:
@@ -81,7 +112,7 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
             _LOGGER.debug(f"Valori non validi per corrente su {panel}: Vin={values.get('Vin')}, Pin={values.get('Pin')}")
             values["Iin"] = 0
 
-    return panel_data if panel_data else None
+    return panel_data or {}
 
 def fetch_tigo_layout_from_ip(ip: str) -> dict:
     try:
@@ -152,12 +183,17 @@ def fetch_tigo_energy_history(ip: str) -> list[dict]:
         return []
 
 def fetch_daily_energy(ip: str) -> dict:
+    """
+    Calcola l'energia prodotta dai pannelli Tigo,
+    restituendo oggi, ieri, settimanale e mensile per ogni pannello.
+    """
     base_url = f"http://{ip}/cgi-bin/summary_data"
     today = datetime.now().date()
-    history = []
-    daily_energy = 0.0
+    history: list[tuple[str, dict[int, float]]] = []  # [(data, {panel_index: kWh})]
 
-    def get_day_energy(date_str: str) -> float:
+    def get_day_energy(date_str: str) -> dict[int, float]:
+        """Restituisce la produzione per pannello in kWh in una giornata."""
+        panel_wh: dict[int, float] = {}
         try:
             params = {"date": date_str, "temp": "pin", "_": int(time.time())}
             r = requests.get(base_url, headers=AUTH_HEADER, params=params, timeout=10)
@@ -165,66 +201,63 @@ def fetch_daily_energy(ip: str) -> dict:
             data = r.json()
             dataset = data.get("dataset", [])
 
-            total_wh = 0
             for block in dataset:
                 for entry in block.get("data", []):
                     values = entry.get("d", [])
-                    minute_sum = sum(
-                        float(v) for v in values
-                        if isinstance(v, (int, float, str)) and str(v).replace('.', '', 1).isdigit()
-                    )
-                    total_wh += minute_sum / 60  # Wh per minuto
-
-            return round(total_wh / 1000, 2)  # kWh
+                    for i, raw_v in enumerate(values):
+                        try:
+                            v = float(raw_v)
+                        except (TypeError, ValueError):
+                            v = 0.0
+                        # Wh accumulati (per minuto)
+                        panel_wh[i] = panel_wh.get(i, 0) + v / 60
         except (requests.exceptions.ConnectTimeout, requests.exceptions.ReadTimeout):
-            _LOGGER.info(f"Tigo non raggiungibile (timeout) per energy del {date_str}: standby notturno")
-            return 0.0
+            _LOGGER.info(f"Tigo non raggiungibile (timeout) per energy del {date_str}")
         except Exception as e:
             _LOGGER.warning(f"Errore nel recupero dei dati per {date_str}: {e}")
-            return 0.0
 
-    for i in range(6, -1, -1):
+        # Converti in kWh
+        return {i: round(val / 1000, 2) for i, val in panel_wh.items()}
+
+    # Recupera ultimi 30 giorni
+    for i in range(29, -1, -1):
         date_obj = today - timedelta(days=i)
         date_str = date_obj.isoformat()
-        is_today = date_obj == today
-        is_midnight = datetime.now().hour == 0
+        energy_per_panel = get_day_energy(date_str)
+        history.append((date_str, energy_per_panel))
 
-        energy = get_day_energy(date_str)
-        if not is_today and not is_midnight and energy == 0:
-            _LOGGER.debug(f"Valore 0 per {date_str}, provo a ricalcolare (HA riavviato?)")
-            energy = get_day_energy(date_str)
+    # Oggi, ieri
+    today_energy = history[-1][1] if history else {}
+    yesterday_energy = history[-2][1] if len(history) > 1 else {}
 
-        history.append([date_str, energy])
-        if is_today:
-            daily_energy = energy
+    # Weekly (ultimi 7 giorni)
+    weekly_energy: dict[int, float] = {}
+    for _, day_data in history[-7:]:
+        for panel_id, val in day_data.items():
+            weekly_energy[panel_id] = weekly_energy.get(panel_id, 0) + val
 
-    today_str = today.isoformat()
-    today_energy = 0
-    previous_days = []
+    # Monthly (ultimi 30 giorni)
+    monthly_energy: dict[int, float] = {}
+    for _, day_data in history:
+        for panel_id, val in day_data.items():
+            monthly_energy[panel_id] = monthly_energy.get(panel_id, 0) + val
 
-    weekly_energy = sum(val for _, val in history[-7:])
-
-    # Riassegna today/yesterday come prima
-    today_energy = history[-1][1] if len(history) >= 1 else 0
-    yesterday_energy = history[-2][1] if len(history) >= 2 else 0
-    
+    # Rinomina storico con giorno della settimana
     import calendar
-
     history_named = {
-        f"{date_str} ({calendar.day_name[datetime.strptime(date_str, '%Y-%m-%d').weekday()]})": value
-        for date_str, value in history
+        f"{date_str} ({calendar.day_name[datetime.strptime(date_str, '%Y-%m-%d').weekday()]})": day_data
+        for date_str, day_data in history
     }
-    
 
     return {
-        "today_energy": today_energy,
-        "yesterday_energy": yesterday_energy,
-        "weekly_energy": weekly_energy,
-        "history": history,
-        "history_named": history_named,
+        "today_energy": today_energy,          # {panel: kWh}
+        "yesterday_energy": yesterday_energy,  # {panel: kWh}
+        "weekly_energy": weekly_energy,        # {panel: kWh}
+        "monthly_energy": monthly_energy,      # {panel: kWh}
+        "history": history,                    # lista [(data, {panel: kWh})]
+        "history_named": history_named,        # dict {data: {panel: kWh}}
     }
-    
-    
+
 def fetch_device_info(ip: str) -> dict:
     try:
         url = f"http://{ip}/cgi-bin/mobile_api?cmd=DEVICE_INFO"
