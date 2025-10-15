@@ -242,7 +242,6 @@ def fetch_daily_energy(ip: str) -> dict:
         for panel_id, val in day_data.items():
             monthly_energy[panel_id] = monthly_energy.get(panel_id, 0) + val
 
-    # Rinomina storico con giorno della settimana
     import calendar
     history_named = {
         f"{date_str} ({calendar.day_name[datetime.strptime(date_str, '%Y-%m-%d').weekday()]})": day_data

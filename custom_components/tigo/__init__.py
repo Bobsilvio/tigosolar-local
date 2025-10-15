@@ -39,7 +39,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator.data_source = source
     await coordinator.async_config_entry_first_refresh()
 
-    panel_data = coordinator.data or {}  # <-- qui assicuriamo un dict
+    panel_data = coordinator.data or {}
     if not panel_data:
         _LOGGER.warning("Nessun dato disponibile dal coordinatore")
     
