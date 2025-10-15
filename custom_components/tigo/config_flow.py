@@ -26,10 +26,11 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ipaddress.ip_address(ip_input)
                 unique_id = f"tigo_{ip_input.replace('.', '_')}"
                 await self.async_set_unique_id(unique_id, raise_on_progress=False)
-                existing_entry = await self.async_get_entry(unique_id)
 
-                if existing_entry:
-                    return self.async_abort(reason="already_configured")
+                # Controlla se già configurato
+                for entry in self._async_current_entries():
+                    if entry.unique_id == unique_id:
+                        return self.async_abort(reason="already_configured")
                 
                 return self.async_create_entry(
                     title=f"Tigo @ {ip_input}",

@@ -291,11 +291,25 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        value = self.coordinator.data.get(self._panel_id, {}).get(self._param)
+        data = self.coordinator.data
+        if not data:
+            _LOGGER.warning(
+                "No data available yet for panel %s (%s) — coordinator returned None",
+                self._panel_id, getattr(self, "_param", "?")
+            )
+            return None
+
+        panel_data = data.get(self._panel_id)
+        if not panel_data:
+            return None
+
+        value = panel_data.get(self._param)
+
         try:
             return round(float(value), 2) if value is not None else None
         except (ValueError, TypeError):
             return None
+    
 
     @property
     def extra_state_attributes(self):
@@ -309,7 +323,6 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
             "mp": self._layout.get("MP"),
         }
 
-
 class TigoSystemSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, name, key, unit, unique_id, coordinator, device_class=None, icon=None):
         super().__init__(coordinator)
@@ -320,7 +333,6 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = device_class
         self._attr_icon = icon
 
-        # Assegna state_class solo se è energia
         if device_class == SensorDeviceClass.ENERGY:
             self._attr_state_class = SensorStateClass.TOTAL
 
@@ -330,11 +342,25 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
             "manufacturer": "Tigo",
         }
 
-
     @property
     def native_value(self):
-        return self.coordinator.data.get(self._key)
+        value = self.coordinator.data.get(self._key)
 
+        if isinstance(value, dict):
+            try:
+                value = list(value.values())[-1]
+            except Exception as e:
+                _LOGGER.warning("Invalid dict structure for %s: %s", self._key, e)
+                value = None
+
+        if self.device_class == SensorDeviceClass.ENERGY:
+            try:
+                return round(float(value), 2) if value is not None else None
+            except (ValueError, TypeError):
+                _LOGGER.warning("Non-numeric value for energy sensor %s: %s", self._key, value)
+                return None
+
+        return value
 
     @property
     def extra_state_attributes(self):
