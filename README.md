@@ -4,6 +4,9 @@ A custom integration that connects Home Assistant to a **Tigo CCA** (Cloud Conne
 
 ⚠️ Not compatible with Tigosolar-online
 
+<img src="images/1.png" alt="Sample" width="600"> <img src="images/2.png" alt="Sample" width="600">
+<img src="images/3.png" alt="Sample" width="600">
+<img src="images/4.png" alt="Sample" width="600">
 ---
 
 ## HACS
