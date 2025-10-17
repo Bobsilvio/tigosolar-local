@@ -157,15 +157,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 )
     
     device_registry = dr.async_get(hass)
+    # Ricava tipo di dispositivo dal prefisso
+    if "esp" in cca_prefix.lower():
+        device_model = "ESP32"
+        device_name = f"Tigo ESP32 System ({ip_address})"
+    elif "cca" in cca_prefix.lower():
+        device_model = "Tigo CCA"
+        device_name = f"Tigo CCA System ({ip_address})"
+    else:
+        device_model = "Unknown"
+        device_name = f"Tigo Local System ({ip_address})"
 
     system_device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, f"{cca_prefix}_tigo_system")},
         manufacturer="Tigo",
-        name="Tigo Local System",
-        model="Gateway" if source == "CCA" else "ESP32",
+        name=device_name,
+        model=device_model,
         suggested_area="Solar",
     )
+    
 
     if source == "CCA":
         async def fetch_energy_data():

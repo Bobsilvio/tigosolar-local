@@ -15,7 +15,7 @@ AUTH_HEADER = {
 }
 
 def fetch_tigo_data_from_ws(ws_url: str) -> dict:
-    """Legge i dati dal WS e li restituisce come dict {panel_id: {...}}"""
+    """Legge i dati dal WS e li restituisce come dict {panel_id: {...}}, usando addr come fallback stabile."""
     try:
         ws = websocket.create_connection(ws_url, timeout=5)
         raw = ws.recv()
@@ -23,23 +23,36 @@ def fetch_tigo_data_from_ws(ws_url: str) -> dict:
 
         data_list = json.loads(raw)  # lista di moduli
         panel_data = {}
+
         for mod in data_list:
-            panel_id = mod.get("id")
-            if panel_id:
-                panel_data[panel_id] = {
-                    "Pin": mod.get("watt", 0),
-                    "Vin": mod.get("vin", 0),
-                    "Vout": mod.get("vout", 0),
-                    "Iin": mod.get("amp", 0),
-                    "Temp": mod.get("temp", 0),
-                    "Rssi": mod.get("rssi", 0)
-                }
+            # Priorità: barcode -> id -> addr
+            barcode = mod.get("barcode") or None
+            addr = mod.get("addr") or None
+            generic_id = mod.get("id")
+
+            # Usa barcode se disponibile, altrimenti addr, altrimenti id generico
+            panel_id = barcode or addr or generic_id
+            if not panel_id:
+                continue
+
+            panel_data[panel_id] = {
+                "Pin": mod.get("watt", 0),
+                "Vin": mod.get("vin", 0),
+                "Vout": mod.get("vout", 0),
+                "Iin": mod.get("amp", 0),
+                "Temp": mod.get("temp", 0),
+                "Rssi": mod.get("rssi", 0),
+                "Addr": addr,
+                "Barcode": barcode,
+                "GenericID": generic_id,
+            }
 
         return panel_data
 
     except Exception as e:
         _LOGGER.warning(f"Errore WS fetch: {e}")
-        return {}  # <-- MAI None, sempre dict
+        return {}
+
 
 
 
