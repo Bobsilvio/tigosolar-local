@@ -1,4 +1,4 @@
-# Tigo Local Integration for Home Assistant (v2.0.0)
+# Tigo Local Integration for Home Assistant (v2)
 
 A custom integration that connects Home Assistant to a **Tigo CCA** (Cloud Connect Advanced) or **ESP32-based Tigo panels** via the local network, without using cloud services or API keys. It fetches real-time and historical solar panel data directly from the device.
 
