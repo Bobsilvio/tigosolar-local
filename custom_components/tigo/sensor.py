@@ -8,6 +8,9 @@ from homeassistant.helpers.device_registry import async_get
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
+
 import calendar
 
 from .const import DOMAIN
@@ -125,13 +128,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             "string": string_label,
             "inverter": inverter_label,
         }
-    
 
     entities = []
-
     panel_data = coordinator.data or {}
-
     source = getattr(coordinator, "data_source", entry.data.get("source", "CCA"))
+    energy_entities_by_panel = {}
 
     for panel_id, data in panel_data.items():
         if not isinstance(data, dict):
@@ -140,6 +141,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         layout_info = layout_map.get(panel_id, {})
         parent_info = resolve_parents(panel_id, layout_map)
 
+        # sensori standard
         for param, prop in PANEL_PROPERTIES.items():
             if param == "Temp" and source != "ESP32_WS":
                 continue
@@ -155,9 +157,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                         **prop
                     )
                 )
-    
+
+        total_energy = TigoPanelEnergy(coordinator, panel_id, layout_info, parent_info, cca_prefix)
+        entities.append(total_energy)
+        entities.append(TigoPanelPeriodEnergy(coordinator, "day", total_energy, panel_id, cca_prefix))
+        entities.append(TigoPanelPeriodEnergy(coordinator, "month", total_energy, panel_id, cca_prefix))
+
     device_registry = dr.async_get(hass)
-    # Ricava tipo di dispositivo dal prefisso
+
     if "esp" in cca_prefix.lower():
         device_model = "ESP32"
         device_name = f"Tigo ESP32 System ({ip_address})"
@@ -176,7 +183,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         model=device_model,
         suggested_area="Solar",
     )
-    
 
     if source == "CCA":
         async def fetch_energy_data():
@@ -253,8 +259,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             )
 
     async_add_entities(entities)
-    
-
 
 class TigoPanelSensor(CoordinatorEntity, SensorEntity):
     def __init__(
@@ -303,7 +307,6 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
             "hw_version": channel,
             "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
         }
-        
 
 #        if connections:
 #            self._attr_device_info["connections"] = connections
@@ -319,11 +322,9 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
     def native_value(self):
         data = self.coordinator.data
         if not data:
-            _LOGGER.warning(
-                "No data available yet for panel %s (%s) — coordinator returned None",
-                self._panel_id, getattr(self, "_param", "?")
-            )
+            _LOGGER.debug("No data yet for panel — coordinator is None")
             return None
+        
 
         panel_data = data.get(self._panel_id)
         if not panel_data:
@@ -349,6 +350,179 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
             "mp": self._layout.get("MP"),
         }
 
+class _EnergyIntegrator:
+    """Integrazione trapezoidale semplice da W a kWh."""
+    def __init__(self):
+        self.last_ts = None
+        self.last_w = None
+        self.kwh = 0.0
+
+    def update(self, w: float, now=None) -> float:
+        if w is None:
+            return self.kwh
+        now = now or dt_util.utcnow()
+        if self.last_ts is None:
+            self.last_ts = now
+            self.last_w = float(w)
+            return self.kwh
+        dt_s = (now - self.last_ts).total_seconds()
+        if dt_s > 0:
+            w0 = float(self.last_w)
+            w1 = float(w)
+            self.kwh += ((w0 + w1) / 2.0) * dt_s / 3600.0 / 1000.0
+            self.last_ts = now
+            self.last_w = w1
+        return self.kwh
+
+
+class TigoPanelEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(self, coordinator, panel_id, layout_info, parent_info, cca_prefix):
+        super().__init__(coordinator)
+        self._panel_id = panel_id
+        self._layout = layout_info or {}
+        self._parent_info = parent_info or {}
+        self._attr_name = f"Panel {panel_id} Energy"
+        self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy"
+        self._integrator = _EnergyIntegrator()
+        self._kwh = 0.0
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
+            "name": f"Panel {panel_id}",
+            "manufacturer": "Tigo",
+            "model": self._layout.get("type", "Tigo Panel"),
+            "sw_version": self._layout.get("serial", panel_id),
+            "hw_version": self._layout.get("channel", "unknown"),
+            "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
+        }
+
+    async def async_added_to_hass(self):
+        last = await self.async_get_last_state()
+        if last and last.state not in (None, "unknown", "unavailable"):
+            try:
+                self._integrator.kwh = float(last.state)
+                self._kwh = self._integrator.kwh
+            except (TypeError, ValueError):
+                pass
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
+        await self._async_integrate_once()
+        self.async_write_ha_state()
+    
+
+    async def _async_integrate_once(self):
+        coord_data = self.coordinator.data or {}
+        pd = coord_data.get(self._panel_id) or {}
+
+        w_raw = pd.get("Pin")
+        w = float(w_raw) if w_raw is not None else None
+        if w is not None and w < 0:
+            w = 0.0
+
+        now = dt_util.utcnow()
+        self._kwh = round(self._integrator.update(w, now), 3)
+
+    def _handle_coordinator_update(self):
+        self.hass.async_create_task(self._async_integrate_then_write())
+
+    async def _async_integrate_then_write(self):
+        await self._async_integrate_once()
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self):
+        return self._kwh
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "serial": self._layout.get("serial"),
+            "channel": self._layout.get("channel"),
+            "source": "Pin (power) trapezoidal integration on coordinator updates",
+        }
+
+class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:calendar-clock"
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(self, coordinator, period: str, total_entity: TigoPanelEnergy,
+                 panel_id: str, cca_prefix: str):
+        super().__init__(coordinator)
+        self._period = period
+        self._total_entity = total_entity
+        self._panel_id = panel_id
+        self._attr_name = f"Panel {panel_id} Energy {period.capitalize()}"
+        self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy_{period}"
+        self._baseline = 0.0
+        self._period_key = None
+        self._value = 0.0
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
+            "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
+        }
+
+    def _current_period_key(self):
+        now = dt_util.now()
+        return now.strftime("%Y-%m-%d") if self._period == "day" else now.strftime("%Y-%m")
+
+    async def async_added_to_hass(self):
+        last = await self.async_get_last_state()
+        if last:
+            if last.attributes and "baseline" in last.attributes:
+                try:
+                    self._baseline = float(last.attributes["baseline"])
+                except (TypeError, ValueError):
+                    pass
+            if last.attributes and "period_key" in last.attributes:
+                self._period_key = last.attributes["period_key"]
+            if last.state not in (None, "unknown", "unavailable"):
+                try:
+                    self._value = float(last.state)
+                except (TypeError, ValueError):
+                    pass
+
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_update))
+        await self._async_recompute()
+        self.async_write_ha_state()
+    
+
+    async def _async_recompute(self):
+        total = self._total_entity.native_value
+        if total is None:
+            return
+        key_now = self._current_period_key()
+        if self._period_key != key_now:
+            self._baseline = float(total)
+            self._period_key = key_now
+        self._value = round(max(0.0, float(total) - float(self._baseline)), 3)
+
+    def _handle_update(self):
+        self.hass.async_create_task(self._async_recompute_then_write())
+
+    async def _async_recompute_then_write(self):
+        await self._async_recompute()
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self):
+        return self._value
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "baseline": round(self._baseline, 3),
+            "period_key": self._period_key,
+            "period": self._period,
+            "source_total_entity": self._total_entity.entity_id if self._total_entity.entity_id else None,
+        }
 
 class TigoSystemSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, name, key, unit, unique_id, coordinator, cca_prefix, device_class=None, icon=None):
@@ -365,7 +539,7 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{cca_prefix}_tigo_system")},
-            "name": "Tigo Local System",  # Nome visibile in HA
+            "name": "Tigo Local System",
             "manufacturer": "Tigo",
         }
 
@@ -387,10 +561,7 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
             except (ValueError, TypeError):
                 _LOGGER.warning("Non-numeric value for energy sensor %s: %s", self._key, value)
                 return None
-
         return value
-    
-
 
     @property
     def extra_state_attributes(self):
