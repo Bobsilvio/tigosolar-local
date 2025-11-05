@@ -15,7 +15,8 @@ AUTH_HEADER = {
     "User-Agent": "Mozilla/5.0"
 }
 
-ì_session = None
+_session: requests.Session | None = None
+
 def _get_session() -> requests.Session:
     global _session
     if _session is None:
@@ -55,8 +56,6 @@ def _get_json(url: str, *, params: dict | None = None, timeout: float = 6.0) -> 
     except Exception as e:
         _log_throttled(f"generic:{url}", logging.WARNING, f"Errore generico su {url}: {e}")
         return None
-
-
 
 def fetch_tigo_data_from_ws(ws_url: str) -> dict:
     """Legge i dati dal WS e li restituisce come dict {panel_id: {...}}"""
