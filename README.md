@@ -9,6 +9,12 @@ A custom integration that connects Home Assistant to a **Tigo CCA** (Cloud Conne
 <img src="images/4.png" alt="Sample" width="600">
 ---
 
+## NOTE -  IF STOP WORKING??
+
+If the integration stops working and you can’t see any data from Tigo, you may need to update the CCA.
+Open the Tigo app on your phone and move as close as possible to the CCA to establish a Bluetooth connection. Then update the CCA firmware.
+Once it reboots, the integration should start working again.
+
 ## HACS
 
 This integration can be installed manually or via HACS when available.
