@@ -10,12 +10,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.const import CONF_IP_ADDRESS
 
-from .const import DOMAIN
+from .const import (
+    DOMAIN,
+    SCAN_INTERVAL,                 # compat
+    OPT_SCAN_INTERVAL,
+    SCAN_INTERVAL_DEFAULT_SEC,
+    _LOGGER,
+)
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_data_from_ws
 
-_LOGGER = logging.getLogger(__name__)
-
-SCAN_INTERVAL = timedelta(seconds=60)
 
 def _with_retries(fn: Callable[[], dict], label: str, attempts: int = 5, base_sleep: int = 15) -> dict:
     last_err = None
@@ -38,9 +41,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry.options.get(CONF_IP_ADDRESS)
         or entry.data.get(CONF_IP_ADDRESS)
         or entry.data.get("host")
-        or entry.title  # fallback
+        or entry.title
     )
-
     source = entry.options.get("source") or entry.data.get("source") or "CCA"
 
     if source == "ESP32_WS":
@@ -57,15 +59,40 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _async_update_method() -> dict:
         return await hass.async_add_executor_job(_with_retries, _sync_fetch, label)
 
+    # --- nuovo: leggi lo scan interval dalle opzioni (fallback al default/vecchia costante) ---
+    scan_seconds = int(
+        entry.options.get(
+            OPT_SCAN_INTERVAL,
+            entry.data.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC),
+        )
+    )
+    update_interval = timedelta(seconds=scan_seconds) if scan_seconds > 0 else SCAN_INTERVAL
+
     coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
         name=f"Tigo Panel Data ({ip_address})",
         update_method=_async_update_method,
-        update_interval=SCAN_INTERVAL,
+        update_interval=update_interval,
     )
     coordinator.data_source = source
 
+    # --- nuovo: listener delle opzioni per applicare subito il nuovo intervallo ---
+    async def _options_updated(hass: HomeAssistant, updated_entry: ConfigEntry) -> None:
+        new_scan = int(
+            updated_entry.options.get(
+                OPT_SCAN_INTERVAL,
+                updated_entry.data.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC),
+            )
+        )
+        coordinator.update_interval = timedelta(seconds=new_scan)
+        _LOGGER.info("⏱️ Tigo scan interval aggiornato a %ss", new_scan)
+        # opzionale: triggera un refresh immediato
+        await coordinator.async_request_refresh()
+
+    entry.async_on_unload(entry.add_update_listener(_options_updated))
+
+    # Primo bootstrap con retry progressivo (come tua versione)
     max_first_attempts = 6
     first_delay = 10
     success = False

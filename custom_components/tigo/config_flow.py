@@ -9,11 +9,7 @@ from homeassistant.const import CONF_IP_ADDRESS
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.core import callback
 
-from .const import DOMAIN
-
-_LOGGER = logging.getLogger(__name__)
-
-DATA_SOURCE = ["CCA", "ESP32_WS"]
+from .const import DOMAIN, DATA_SOURCE, _LOGGER
 
 class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
@@ -68,27 +64,69 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
         self._config_entry = config_entry
 
     async def async_step_init(self, user_input=None):
+        from .const import (
+            OPT_SCAN_INTERVAL,
+            SCAN_INTERVAL_DEFAULT_SEC,
+            SCAN_INTERVAL_MIN_SEC,
+            SCAN_INTERVAL_MAX_SEC,
+        )
         errors = {}
 
-        current_ip = self._config_entry.options.get(CONF_IP_ADDRESS, self._config_entry.data.get(CONF_IP_ADDRESS, ""))
-        current_source = self._config_entry.options.get("source", self._config_entry.data.get("source", "CCA"))
+        current_ip = self._config_entry.options.get(
+            CONF_IP_ADDRESS, self._config_entry.data.get(CONF_IP_ADDRESS, "")
+        )
+        current_source = self._config_entry.options.get(
+            "source", self._config_entry.data.get("source", "CCA")
+        )
+        current_scan = int(
+            self._config_entry.options.get(
+                OPT_SCAN_INTERVAL,
+                self._config_entry.data.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC),
+            )
+        )
 
         if user_input is not None:
             ip_input = user_input.get(CONF_IP_ADDRESS, "")
             source = user_input.get("source", "CCA")
+            scan_sec = user_input.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC)
+
             try:
                 import ipaddress
                 ipaddress.ip_address(ip_input)
-                return self.async_create_entry(title="", data={CONF_IP_ADDRESS: ip_input, "source": source})
-            except ValueError:
-                errors[CONF_IP_ADDRESS] = "invalid_ip"
+
+                # normalizza/valida scan interval
+                scan_sec = int(scan_sec)
+                if not (SCAN_INTERVAL_MIN_SEC <= scan_sec <= SCAN_INTERVAL_MAX_SEC):
+                    raise ValueError("scan_out_of_range")
+
+                return self.async_create_entry(
+                    title="",
+                    data={
+                        CONF_IP_ADDRESS: ip_input,
+                        "source": source,
+                        OPT_SCAN_INTERVAL: scan_sec,
+                    },
+                )
+
+            except ValueError as e:
+                if str(e) == "scan_out_of_range":
+                    errors["base"] = "invalid_scan_interval"
+                else:
+                    errors[CONF_IP_ADDRESS] = "invalid_ip"
+
+        schema = vol.Schema({
+            vol.Required(CONF_IP_ADDRESS, default=current_ip): str,
+            vol.Required("source", default=current_source): vol.In(DATA_SOURCE),
+            vol.Required(OPT_SCAN_INTERVAL, default=current_scan): vol.All(
+                vol.Coerce(int),
+                vol.Range(min=SCAN_INTERVAL_MIN_SEC, max=SCAN_INTERVAL_MAX_SEC),
+            ),
+        })
 
         return self.async_show_form(
             step_id="init",
-            data_schema=vol.Schema({
-                vol.Required(CONF_IP_ADDRESS, default=current_ip): str,
-                vol.Required("source", default=current_source): vol.In(DATA_SOURCE),
-            }),
+            data_schema=schema,
             errors=errors,
         )
+
     

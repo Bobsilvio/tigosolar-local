@@ -13,7 +13,7 @@ from homeassistant.util import dt as dt_util
 
 import calendar
 
-from .const import DOMAIN
+from .const import DOMAIN, _LOGGER
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_layout_from_ip, fetch_daily_energy, fetch_device_info
 
 from homeassistant.const import (
@@ -28,8 +28,6 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 PANEL_PROPERTIES = {
     "Pin": {
@@ -118,9 +116,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             parent = layout_map.get(parent_id)
             if not parent:
                 break
-            if parent.get("tl") == "String":
+            parent_type = parent.get("type")
+            if parent_type == "String" or parent_type == 3:
                 string_label = parent.get("label")
-            elif parent.get("tl") == "Inverter":
+            elif parent_type == "Inverter" or parent_type == 4:
                 inverter_label = parent.get("label")
             current_id = parent_id
 
@@ -141,6 +140,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         layout_info = layout_map.get(panel_id, {})
         parent_info = resolve_parents(panel_id, layout_map)
 
+        # --- Label leggibile e arricchimento device info per ESP ---
+        if source == "ESP32_WS" and not layout_info:
+            display_label = panel_id.lstrip("0") or panel_id
+            layout_info = {
+                "serial": data.get("Barcode") or panel_id,
+                "channel": data.get("Addr") or "unknown",
+                "label": display_label,
+            }
+        else:
+            display_label = layout_info.get("label") or panel_id
+
         # sensori standard
         for param, prop in PANEL_PROPERTIES.items():
             if param == "Temp" and source != "ESP32_WS":
@@ -154,14 +164,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                         layout_info,
                         parent_info,
                         cca_prefix,
+                        display_label=display_label,
                         **prop
                     )
                 )
 
-        total_energy = TigoPanelEnergy(coordinator, panel_id, layout_info, parent_info, cca_prefix)
+        total_energy = TigoPanelEnergy(coordinator, panel_id, layout_info, parent_info, cca_prefix, display_label)
         entities.append(total_energy)
-        entities.append(TigoPanelPeriodEnergy(coordinator, "day", total_energy, panel_id, cca_prefix))
-        entities.append(TigoPanelPeriodEnergy(coordinator, "month", total_energy, panel_id, cca_prefix))
+        entities.append(TigoPanelPeriodEnergy(coordinator, "day", total_energy, panel_id, cca_prefix, display_label))
+        entities.append(TigoPanelPeriodEnergy(coordinator, "month", total_energy, panel_id, cca_prefix, display_label))
 
     device_registry = dr.async_get(hass)
 
@@ -189,7 +200,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             raw = await hass.async_add_executor_job(fetch_daily_energy, ip_address)
             device_info = await hass.async_add_executor_job(fetch_device_info, ip_address)
 
-            _LOGGER.debug(f"Risultato da fetch_daily_energy: {raw}")
+            _LOGGER.debug("Risultato da fetch_daily_energy: %s", raw)
 
             history = raw.get("history", [])
             today_energy = raw.get("today_energy", 0)
@@ -274,13 +285,15 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         device_class,
         state_class,
         icon,
+        display_label=None,
     ):
         super().__init__(coordinator)
         self._panel_id = panel_id
         self._param = param
         self._layout = layout_info or {}
         self._parent_info = parent_info or {}
-        self._attr_name = f"Panel {panel_id} {name}"
+        self._display_label = display_label or panel_id
+        self._attr_name = f"Panel {self._display_label} {name}"
         self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_{param.lower()}"
         self._attr_native_unit_of_measurement = native_unit_of_measurement
         self._attr_device_class = device_class
@@ -300,7 +313,7 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
-            "name": f"Panel {panel_id}",
+            "name": f"Panel {self._display_label}",
             "manufacturer": "Tigo",
             "model": self._layout.get("type", "Tigo Panel"),
             "sw_version": serial,
@@ -381,19 +394,20 @@ class TigoPanelEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:lightning-bolt"
 
-    def __init__(self, coordinator, panel_id, layout_info, parent_info, cca_prefix):
+    def __init__(self, coordinator, panel_id, layout_info, parent_info, cca_prefix, display_label=None):
         super().__init__(coordinator)
         self._panel_id = panel_id
         self._layout = layout_info or {}
         self._parent_info = parent_info or {}
-        self._attr_name = f"Panel {panel_id} Energy"
+        self._display_label = display_label or panel_id
+        self._attr_name = f"Panel {self._display_label} Energy"
         self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy"
         self._integrator = _EnergyIntegrator()
         self._kwh = 0.0
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
-            "name": f"Panel {panel_id}",
+            "name": f"Panel {self._display_label}",
             "manufacturer": "Tigo",
             "model": self._layout.get("type", "Tigo Panel"),
             "sw_version": self._layout.get("serial", panel_id),
@@ -453,12 +467,13 @@ class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
     _attr_entity_registry_enabled_default = True
 
     def __init__(self, coordinator, period: str, total_entity: TigoPanelEnergy,
-                 panel_id: str, cca_prefix: str):
+                 panel_id: str, cca_prefix: str, display_label: str = None):
         super().__init__(coordinator)
         self._period = period
         self._total_entity = total_entity
         self._panel_id = panel_id
-        self._attr_name = f"Panel {panel_id} Energy {period.capitalize()}"
+        self._display_label = display_label or panel_id
+        self._attr_name = f"Panel {self._display_label} Energy {period.capitalize()}"
         self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy_{period}"
         self._baseline = 0.0
         self._period_key = None

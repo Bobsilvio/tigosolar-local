@@ -5,15 +5,7 @@ import time
 import websocket
 import json
 from requests.adapters import HTTPAdapter
-
-_LOGGER = logging.getLogger(__name__)
-
-AUTH_HEADER = {
-    "Authorization": "Basic VGlnbzokb2xhcg==",
-    "Content-Type": "application/json",
-    "Accept": "*/*",
-    "User-Agent": "Mozilla/5.0"
-}
+from .const import AUTH_HEADER, _LOGGER
 
 _session: requests.Session | None = None
 
@@ -73,7 +65,9 @@ def fetch_tigo_data_from_ws(ws_url: str) -> dict:
         barcode = mod.get("barcode") or None
         addr = mod.get("addr") or None
         generic_id = mod.get("id")
-        panel_id = barcode or addr or generic_id
+        # Usa addr come ID primario (stabile), poi generic_id, infine barcode
+        # barcode può apparire e scomparire causando nomi entità instabili
+        panel_id = addr or generic_id or barcode
         if not panel_id:
             continue
         panel_data[panel_id] = {

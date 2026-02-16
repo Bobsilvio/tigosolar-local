@@ -5,9 +5,9 @@
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/Bobsilvio/tigosolar-local/",
-  "iot_class": "cloud_polling",
+  "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Bobsilvio/tigosolar-local/issues",
   "loggers": ["tigo"],
-  "requirements": [],
-  "version": "3.0.1"
+  "requirements": ["websocket-client>=1.6.0"],
+  "version": "3.0.2"
 } 
