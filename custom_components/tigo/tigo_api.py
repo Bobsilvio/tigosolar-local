@@ -76,7 +76,7 @@ def fetch_tigo_data_from_ws(ws_url: str) -> dict:
             "Vout": mod.get("vout", 0),
             "Iin": mod.get("amp", 0),
             "Temp": mod.get("temp", 0),
-            "Rssi": mod.get("rssi", 0),
+            "Rssi": -abs(mod.get("rssi", 0)) if mod.get("rssi") else 0,
             "Addr": addr,
             "Barcode": barcode,
             "GenericID": generic_id,
@@ -129,6 +129,11 @@ def fetch_tigo_data_from_ip(ip: str) -> dict:
                 break
 
     for panel, values in panel_data.items():
+        # RSSI è sempre negativo in dBm
+        rssi = values.get("Rssi")
+        if rssi is not None and rssi != 0:
+            values["Rssi"] = -abs(rssi)
+
         try:
             vin = float(values.get("Vin", 0) or 0)
             pin = float(values.get("Pin", 0) or 0)
