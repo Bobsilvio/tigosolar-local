@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import logging
 from datetime import timedelta, datetime
 from homeassistant.core import HomeAssistant
@@ -142,7 +143,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
         # --- Label leggibile e arricchimento device info per ESP ---
         if source == "ESP32_WS" and not layout_info:
-            display_label = panel_id.lstrip("0") or panel_id
+            # Usa il nome pannello dal WS se disponibile, altrimenti addr senza zeri iniziali
+            ws_panel_name = data.get("PanelName")
+            display_label = ws_panel_name or panel_id.lstrip("0") or panel_id
             layout_info = {
                 "serial": data.get("Barcode") or panel_id,
                 "channel": data.get("Addr") or "unknown",
@@ -293,7 +296,7 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         self._layout = layout_info or {}
         self._parent_info = parent_info or {}
         self._display_label = display_label or panel_id
-        self._attr_name = f"Panel {self._display_label} {name}"
+        self._prop_name = name  # es. "Power", "Voltage", ...
         self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_{param.lower()}"
         self._attr_native_unit_of_measurement = native_unit_of_measurement
         self._attr_device_class = device_class
@@ -328,8 +331,19 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         if area:
             self._attr_device_info["suggested_area"] = area
         
-        _LOGGER.debug("Creating sensor: %s | ID: %s | Param: %s", self._attr_name, panel_id, param)
+        _LOGGER.debug("Creating sensor: Panel %s %s | ID: %s | Param: %s", self._display_label, self._prop_name, panel_id, param)
         _LOGGER.debug("Device identifiers: %s", self._attr_device_info["identifiers"])
+
+    @property
+    def _current_label(self) -> str:
+        """Legge PanelName live dal coordinator; fallback al display_label iniziale."""
+        data = self.coordinator.data or {}
+        pd = data.get(self._panel_id) or {}
+        return pd.get("PanelName") or self._display_label
+
+    @property
+    def name(self) -> str:
+        return f"Panel {self._current_label} {self._prop_name}"
 
     @property
     def native_value(self):
@@ -337,7 +351,6 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         if not data:
             _LOGGER.debug("No data yet for panel — coordinator is None")
             return None
-        
 
         panel_data = data.get(self._panel_id)
         if not panel_data:
@@ -400,7 +413,6 @@ class TigoPanelEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
         self._layout = layout_info or {}
         self._parent_info = parent_info or {}
         self._display_label = display_label or panel_id
-        self._attr_name = f"Panel {self._display_label} Energy"
         self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy"
         self._integrator = _EnergyIntegrator()
         self._kwh = 0.0
@@ -414,6 +426,16 @@ class TigoPanelEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
             "hw_version": self._layout.get("channel", "unknown"),
             "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
         }
+
+    @property
+    def _current_label(self) -> str:
+        data = self.coordinator.data or {}
+        pd = data.get(self._panel_id) or {}
+        return pd.get("PanelName") or self._display_label
+
+    @property
+    def name(self) -> str:
+        return f"Panel {self._current_label} Energy"
 
     async def async_added_to_hass(self):
         last = await self.async_get_last_state()
@@ -473,16 +495,26 @@ class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
         self._total_entity = total_entity
         self._panel_id = panel_id
         self._display_label = display_label or panel_id
-        self._attr_name = f"Panel {self._display_label} Energy {period.capitalize()}"
         self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy_{period}"
         self._baseline = 0.0
         self._period_key = None
         self._value = 0.0
+        self._last_reset: datetime | None = None
 
         self._attr_device_info = {
             "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
             "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
         }
+
+    @property
+    def _current_label(self) -> str:
+        data = self.coordinator.data or {}
+        pd = data.get(self._panel_id) or {}
+        return pd.get("PanelName") or self._display_label
+
+    @property
+    def name(self) -> str:
+        return f"Panel {self._current_label} Energy {self._period.capitalize()}"
 
     def _current_period_key(self):
         now = dt_util.now()
@@ -498,6 +530,11 @@ class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
                     pass
             if last.attributes and "period_key" in last.attributes:
                 self._period_key = last.attributes["period_key"]
+            if last.attributes and "last_reset" in last.attributes:
+                try:
+                    self._last_reset = dt_util.parse_datetime(last.attributes["last_reset"])
+                except (TypeError, ValueError, AttributeError):
+                    pass
             if last.state not in (None, "unknown", "unavailable"):
                 try:
                     self._value = float(last.state)
@@ -517,12 +554,16 @@ class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
         if self._period_key != key_now:
             self._baseline = float(total)
             self._period_key = key_now
+            self._last_reset = dt_util.utcnow()
         self._value = round(max(0.0, float(total) - float(self._baseline)), 3)
 
     def _handle_update(self):
         self.hass.async_create_task(self._async_recompute_then_write())
 
     async def _async_recompute_then_write(self):
+        # sleep(0) cede il controllo: consente a TigoPanelEnergy di integrare
+        # il nuovo valore dal coordinator prima che leggiamo native_value
+        await asyncio.sleep(0)
         await self._async_recompute()
         self.async_write_ha_state()
 
@@ -531,11 +572,17 @@ class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
         return self._value
 
     @property
+    def last_reset(self):
+        """Segnala a HA quando il periodo è stato azzerato (richiesto da TOTAL)."""
+        return self._last_reset
+
+    @property
     def extra_state_attributes(self):
         return {
             "baseline": round(self._baseline, 3),
             "period_key": self._period_key,
             "period": self._period,
+            "last_reset": self._last_reset.isoformat() if self._last_reset else None,
             "source_total_entity": self._total_entity.entity_id if self._total_entity.entity_id else None,
         }
 

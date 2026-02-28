@@ -70,6 +70,7 @@ def fetch_tigo_data_from_ws(ws_url: str) -> dict:
         panel_id = addr or generic_id or barcode
         if not panel_id:
             continue
+        panel_name = mod.get("panel") or None
         panel_data[panel_id] = {
             "Pin": mod.get("watt", 0),
             "Vin": mod.get("vin", 0),
@@ -80,6 +81,7 @@ def fetch_tigo_data_from_ws(ws_url: str) -> dict:
             "Addr": addr,
             "Barcode": barcode,
             "GenericID": generic_id,
+            "PanelName": panel_name,
         }
     return panel_data
 
