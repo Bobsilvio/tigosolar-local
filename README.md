@@ -83,46 +83,55 @@ This integration can be installed manually or via HACS when available.
 
 ## 📄 Sensor Naming Convention
 
-All sensors use a **stable, unique ID** based on source and IP to avoid entity renaming after Home Assistant restarts.
+The `entity_id` is generated automatically by Home Assistant from the **entity name**, which follows this pattern:
 
-- `<source>` → `cca` or `esp`
-- `<ip>` → IP address without dots, e.g., `192168178155`
-- `<panel_id>` → for **CCA**: panel label (e.g. `b1`); for **ESP32**: the `addr` field from the WS (e.g. `001b`) — this never changes even if a panel name is assigned later
-- `<parameter>` → `pin`, `vin`, `iin`, `temp`, `rssi`, `energy`, `energy_day`, `energy_month`
+```
+Panel <label> <parameter>
+```
 
-The **display name** of each ESP32 sensor (shown in the HA UI) is taken from the `panel` field of the WebSocket message (e.g. `A1`, `B6`). If that field is absent, the `addr` is used. When the name is assigned on the ESP32 later, the title updates automatically on the next poll with **no new entity created and no history lost**.
+- `<label>` → for **CCA**: the panel label from the layout (e.g. `A2`, `B1`); for **ESP32**: the `panel` field from the WebSocket (e.g. `A1`, `B6`), or the `addr` if no name is assigned yet (e.g. `001B`)
+- `<parameter>` → `Power`, `Voltage`, `Current`, `Temperature`, `Signal Strength`, `Energy`, `Energy Day`, `Energy Month`
+
+The **unique_id** (internal, never changes) is based on source + IP + `addr`/panel_id, so renaming a panel on the ESP32 later updates only the display name — **no new entity is created, history is preserved**.
 
 **Examples:**
 
-- CCA Panel B1 Voltage:  
-  `sensor.cca_192168178155_tigo_b1_vin`
+- CCA Panel A2 Current:  
+  `sensor.panel_a2_current`
 
-- ESP32 Panel A1 Power (addr=001B):  
-  `sensor.esp_192168178155_tigo_001b_pin` → displayed as **Panel A1 Power**
+- ESP32 Panel with addr `001B` (no name assigned yet):  
+  `sensor.panel_001b_current`
+
+- ESP32 Panel A1 (name assigned, addr `001B`):  
+  `sensor.panel_a1_current`
 
 - ESP32 Panel A1 Energy Day:  
-  `sensor.esp_192168178155_tigo_001b_energy_day`
+  `sensor.panel_a1_energy_day`
 
 - ESP32 Panel A1 Energy Month:  
-  `sensor.esp_192168178155_tigo_001b_energy_month`
+  `sensor.panel_a1_energy_month`
 
 ---
 
 ## 📸 Example Entities
 
 ### CCA Panels
-- `sensor.cca_192168178155_tigo_b1_pin` → Panel B1 Power
-- `sensor.cca_192168178155_tigo_b2_vin` → Panel B2 Voltage
-- `sensor.cca_192168178155_tigo_system_today` → Tigo Today Production
-- `sensor.cca_192168178155_tigo_system_weekly` → Tigo Last 7 Days Production
+- `sensor.panel_b1_power` → Panel B1 Power
+- `sensor.panel_b2_voltage` → Panel B2 Voltage
+- `sensor.panel_a2_current` → Panel A2 Current
+- `sensor.tigo_today_production` → Tigo Today Production
+- `sensor.tigo_last_7_days_production` → Tigo Last 7 Days Production
 
 ### ESP32 Panels
-- `sensor.esp_192168178155_tigo_001b_pin` → Panel A1 Power
-- `sensor.esp_192168178155_tigo_001b_vin` → Panel A1 Voltage
-- `sensor.esp_192168178155_tigo_001b_temp` → Panel A1 Temperature
-- `sensor.esp_192168178155_tigo_001b_energy` → Panel A1 Energy (TOTAL_INCREASING)
-- `sensor.esp_192168178155_tigo_001b_energy_day` → Panel A1 Energy Day (resets at midnight)
-- `sensor.esp_192168178155_tigo_001b_energy_month` → Panel A1 Energy Month (resets on 1st)
+- `sensor.panel_a1_power` → Panel A1 Power
+- `sensor.panel_a1_voltage` → Panel A1 Voltage
+- `sensor.panel_a1_current` → Panel A1 Current
+- `sensor.panel_a1_temperature` → Panel A1 Temperature
+- `sensor.panel_a1_energy` → Panel A1 Energy (cumulative, TOTAL_INCREASING)
+- `sensor.panel_a1_energy_day` → Panel A1 Energy Day (resets at midnight)
+- `sensor.panel_a1_energy_month` → Panel A1 Energy Month (resets on 1st)
+
+> **Note:** if the panel has no name yet, `A1` is replaced by the `addr` value, e.g. `sensor.panel_001b_power`.
 
 ---
 
