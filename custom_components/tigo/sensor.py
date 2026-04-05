@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import logging
 from datetime import timedelta, datetime
 from homeassistant.core import HomeAssistant
@@ -8,9 +9,12 @@ from homeassistant.helpers.device_registry import async_get
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, CoordinatorEntity
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
+
 import calendar
 
-from .const import DOMAIN
+from .const import DOMAIN, _LOGGER
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_layout_from_ip, fetch_daily_energy, fetch_device_info
 
 from homeassistant.const import (
@@ -25,8 +29,6 @@ from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorStateClass,
 )
-
-_LOGGER = logging.getLogger(__name__)
 
 PANEL_PROPERTIES = {
     "Pin": {
@@ -57,6 +59,13 @@ PANEL_PROPERTIES = {
         "state_class": SensorStateClass.MEASUREMENT,
         "icon": "mdi:current-ac",
     },
+    "Temp": {
+        "name": "Temperature",
+        "native_unit_of_measurement": "°C",
+        "device_class": None,
+        "state_class": SensorStateClass.MEASUREMENT,
+        "icon": "mdi:thermometer",
+    },
 }
 
 
@@ -67,7 +76,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     panel_data = coordinator.data
     ip_address = hass.data[DOMAIN][entry.entry_id]["ip"]
 
-    layout = await hass.async_add_executor_job(fetch_tigo_layout_from_ip, ip_address)
+    source = getattr(coordinator, "data_source", entry.options.get("source", "CCA"))
+    _LOGGER.debug("Detected Tigo source: %s", source)
+
+    safe_ip = ip_address.replace(".", "")
+    cca_prefix = f"{source[:3].lower()}_{safe_ip}"
+    _LOGGER.debug("Using stable prefix based on IP: %s", cca_prefix)
+    
+
+    if source == "CCA":
+        try:
+            layout = await hass.async_add_executor_job(fetch_tigo_layout_from_ip, ip_address)
+        except Exception as e:
+            _LOGGER.warning("Errore fetch_tigo_layout_from_ip: %s", e)
+            layout = {}
+    else:
+        layout = {"system": {"inverters": []}}
+        _LOGGER.debug("Skipping layout fetch for ESP32 (using empty layout)")
+    
     layout_map = {}
     for inverter in layout.get("system", {}).get("inverters", []):
         layout_map[inverter.get("object_id")] = inverter
@@ -91,9 +117,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             parent = layout_map.get(parent_id)
             if not parent:
                 break
-            if parent.get("tl") == "String":
+            parent_type = parent.get("type")
+            if parent_type == "String" or parent_type == 3:
                 string_label = parent.get("label")
-            elif parent.get("tl") == "Inverter":
+            elif parent_type == "Inverter" or parent_type == 4:
                 inverter_label = parent.get("label")
             current_id = parent_id
 
@@ -101,16 +128,36 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             "string": string_label,
             "inverter": inverter_label,
         }
-    
 
     entities = []
+    panel_data = coordinator.data or {}
+    source = getattr(coordinator, "data_source", entry.data.get("source", "CCA"))
+    energy_entities_by_panel = {}
 
     for panel_id, data in panel_data.items():
+        if not isinstance(data, dict):
+            continue
+
         layout_info = layout_map.get(panel_id, {})
         parent_info = resolve_parents(panel_id, layout_map)
-        
 
+        # --- Label leggibile e arricchimento device info per ESP ---
+        if source == "ESP32_WS" and not layout_info:
+            # Usa il nome pannello dal WS se disponibile, altrimenti addr senza zeri iniziali
+            ws_panel_name = data.get("PanelName")
+            display_label = ws_panel_name or panel_id.lstrip("0") or panel_id
+            layout_info = {
+                "serial": data.get("Barcode") or panel_id,
+                "channel": data.get("Addr") or "unknown",
+                "label": display_label,
+            }
+        else:
+            display_label = layout_info.get("label") or panel_id
+
+        # sensori standard
         for param, prop in PANEL_PROPERTIES.items():
+            if param == "Temp" and source != "ESP32_WS":
+                continue
             if param in data:
                 entities.append(
                     TigoPanelSensor(
@@ -119,118 +166,113 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                         param,
                         layout_info,
                         parent_info,
+                        cca_prefix,
+                        display_label=display_label,
                         **prop
                     )
                 )
 
-    async def fetch_energy_data():
-        raw = await hass.async_add_executor_job(fetch_daily_energy, ip_address)
-        device_info = await hass.async_add_executor_job(fetch_device_info, ip_address)
-        
-        _LOGGER.debug(f"Risultato da fetch_daily_energy: {raw}")
+        total_energy = TigoPanelEnergy(coordinator, panel_id, layout_info, parent_info, cca_prefix, display_label)
+        entities.append(total_energy)
+        entities.append(TigoPanelPeriodEnergy(coordinator, "day", total_energy, panel_id, cca_prefix, display_label))
+        entities.append(TigoPanelPeriodEnergy(coordinator, "month", total_energy, panel_id, cca_prefix, display_label))
 
-        history = raw.get("history", [])
-        today_energy = raw.get("today_energy", 0)
-        yesterday_energy = raw.get("yesterday_energy", 0)
-        weekly_energy = raw.get("weekly_energy", 0)
-
-#        today = datetime.now().date().isoformat()
-#        previous_days = [(d, v) for d, v in history if d != today]
-
-        history_weekly_named = {
-            f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
-            for d, v in history[-7:]
-        }
-
-        return {
-            "today_energy": today_energy,
-            "yesterday_energy": yesterday_energy,
-            "weekly_energy": weekly_energy,
-            "history": history,
-            "history_weekly_named": history_weekly_named,
-            **device_info
-        }
-    
-        
-
-    system_coordinator = DataUpdateCoordinator(
-        hass,
-        _LOGGER,
-        name="Tigo Local System Energy",
-        update_method=fetch_energy_data,
-        update_interval=timedelta(minutes=10),
-    )
-
-    await system_coordinator.async_config_entry_first_refresh()
-
-    entities.append(
-        TigoSystemSensor(
-            "Tigo Today Production",
-            "today_energy",
-            UnitOfEnergy.KILO_WATT_HOUR,
-            "tigo_system_today",
-            system_coordinator,
-            device_class=SensorDeviceClass.ENERGY,
-        )
-    )
-
-    entities.append(
-        TigoSystemSensor(
-            "Tigo Yesterday Production",
-            "yesterday_energy",
-            UnitOfEnergy.KILO_WATT_HOUR,
-            "tigo_system_yesterday",
-            system_coordinator,
-            device_class=SensorDeviceClass.ENERGY,
-        )
-    )
-
-    entities.append(
-        TigoSystemSensor(
-            "Tigo Last 7 Days Production",
-            "weekly_energy",
-            UnitOfEnergy.KILO_WATT_HOUR,
-            "tigo_system_weekly",
-            system_coordinator,
-            device_class=SensorDeviceClass.ENERGY,
-        )
-    )
-    
-    system_keys = [
-        ("serial", "Tigo Serial", None, "mdi:identifier"),
-        ("software", "Tigo Software", None, "mdi:chip"),
-        ("kernel", "Tigo Kernel", None, "mdi:linux"),
-        ("discovery", "Tigo Discovery", None, "mdi:radar"),
-        ("last_data_sync", "Tigo Last Sync", None, "mdi:clock-sync"),
-#        ("cloud", "Tigo Cloud Status", None, "mdi:cloud"),
-#        ("gateway", "Tigo Gateway Status", None, "mdi:router-network"),
-#        ("modules", "Tigo Modules Status", None, "mdi:solar-panel"),
-    ]
-    
-
-    for key, name, device_class, icon in system_keys:
-        entities.append(
-            TigoSystemSensor(
-                name=name,
-                key=key,
-                unit=None,
-                unique_id=f"tigo_system_{key}",
-                coordinator=system_coordinator,
-                device_class=device_class,
-            )
-        )
-        
     device_registry = dr.async_get(hass)
-    device_registry.async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, "tigo_system")},
-        manufacturer="Tigo",
-        name="Tigo Local System",
-        model="Gateway",
-    )
-    
-    async_add_entities(entities)
 
+    if "esp" in cca_prefix.lower():
+        device_model = "ESP32"
+        device_name = f"Tigo ESP32 System ({ip_address})"
+    elif "cca" in cca_prefix.lower():
+        device_model = "Tigo CCA"
+        device_name = f"Tigo CCA System ({ip_address})"
+    else:
+        device_model = "Unknown"
+        device_name = f"Tigo Local System ({ip_address})"
+
+    system_device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, f"{cca_prefix}_tigo_system")},
+        manufacturer="Tigo",
+        name=device_name,
+        model=device_model,
+        suggested_area="Solar",
+    )
+
+    if source == "CCA":
+        async def fetch_energy_data():
+            raw = await hass.async_add_executor_job(fetch_daily_energy, ip_address)
+            device_info = await hass.async_add_executor_job(fetch_device_info, ip_address)
+
+            _LOGGER.debug("Risultato da fetch_daily_energy: %s", raw)
+
+            history = raw.get("history", [])
+            today_energy = raw.get("today_energy", 0)
+            yesterday_energy = raw.get("yesterday_energy", 0)
+            weekly_energy = raw.get("weekly_energy", 0)
+
+            history_weekly_named = {
+                f"{d} ({calendar.day_name[datetime.strptime(d, '%Y-%m-%d').weekday()]})": v
+                for d, v in history[-7:]
+            }
+
+            return {
+                "today_energy": today_energy,
+                "yesterday_energy": yesterday_energy,
+                "weekly_energy": weekly_energy,
+                "history": history,
+                "history_weekly_named": history_weekly_named,
+                **device_info,
+            }
+
+        system_coordinator = DataUpdateCoordinator(
+            hass,
+            _LOGGER,
+            name="Tigo Local System Energy",
+            update_method=fetch_energy_data,
+            update_interval=timedelta(minutes=10),
+        )
+
+        await system_coordinator.async_config_entry_first_refresh()
+
+        entities += [
+            TigoSystemSensor("Tigo Today Production", "today_energy",
+                             UnitOfEnergy.KILO_WATT_HOUR, "tigo_system_today",
+                             system_coordinator, cca_prefix,
+                             device_class=SensorDeviceClass.ENERGY),
+
+            TigoSystemSensor("Tigo Yesterday Production", "yesterday_energy",
+                             UnitOfEnergy.KILO_WATT_HOUR, "tigo_system_yesterday",
+                             system_coordinator, cca_prefix,
+                             device_class=SensorDeviceClass.ENERGY),
+
+            TigoSystemSensor("Tigo Last 7 Days Production", "weekly_energy",
+                             UnitOfEnergy.KILO_WATT_HOUR, "tigo_system_weekly",
+                             system_coordinator, cca_prefix,
+                             device_class=SensorDeviceClass.ENERGY),
+        ]
+
+        system_keys = [
+            ("serial", "Tigo Serial", None, "mdi:identifier"),
+            ("software", "Tigo Software", None, "mdi:chip"),
+            ("kernel", "Tigo Kernel", None, "mdi:linux"),
+            ("discovery", "Tigo Discovery", None, "mdi:radar"),
+            ("last_data_sync", "Tigo Last Sync", None, "mdi:clock-sync"),
+        ]
+
+        for key, name, device_class, icon in system_keys:
+            entities.append(
+                TigoSystemSensor(
+                    name=name,
+                    key=key,
+                    unit=None,
+                    unique_id=f"{cca_prefix}_tigo_system_{key}",
+                    coordinator=system_coordinator,
+                    cca_prefix=cca_prefix,
+                    device_class=device_class,
+                )
+            )
+
+    async_add_entities(entities)
 
 class TigoPanelSensor(CoordinatorEntity, SensorEntity):
     def __init__(
@@ -240,25 +282,27 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         param,
         layout_info,
         parent_info,
+        cca_prefix,
         name,
         native_unit_of_measurement,
         device_class,
         state_class,
         icon,
+        display_label=None,
     ):
         super().__init__(coordinator)
         self._panel_id = panel_id
         self._param = param
         self._layout = layout_info or {}
         self._parent_info = parent_info or {}
-        self._attr_name = f"Tigo {panel_id} {name}"
-        self._attr_unique_id = f"tigo_{panel_id}_{param.lower()}"
+        self._display_label = display_label or panel_id
+        self._prop_name = name  # es. "Power", "Voltage", ...
+        self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_{param.lower()}"
         self._attr_native_unit_of_measurement = native_unit_of_measurement
         self._attr_device_class = device_class
         self._attr_state_class = state_class
         self._attr_icon = icon
-        
-        
+
         serial = self._layout.get("serial", panel_id)
         channel = self._layout.get("channel", "unknown")
         #_LOGGER.debug("Seriale: %s- Channel: %s", serial, channel)
@@ -270,13 +314,13 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
                 connections = {("mac", ":".join([mac[i:i+2] for i in range(0, 12, 2)]))}
 
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, panel_id)},
-            "name": f"Panel {panel_id}",
+            "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
+            "name": f"Panel {self._display_label}",
             "manufacturer": "Tigo",
             "model": self._layout.get("type", "Tigo Panel"),
-            "sw_version": serial,
-            "hw_version": channel,
-            "via_device": (DOMAIN, "tigo_system"),
+            "sw_version": channel,
+            "hw_version": serial,
+            "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
         }
 
 #        if connections:
@@ -286,16 +330,38 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         if area:
             self._attr_device_info["suggested_area"] = area
         
-        _LOGGER.debug("Creating sensor: %s | ID: %s | Param: %s", self._attr_name, panel_id, param)
+        _LOGGER.debug("Creating sensor: Panel %s %s | ID: %s | Param: %s", self._display_label, self._prop_name, panel_id, param)
         _LOGGER.debug("Device identifiers: %s", self._attr_device_info["identifiers"])
 
     @property
+    def _current_label(self) -> str:
+        """Legge PanelName live dal coordinator; fallback al display_label iniziale."""
+        data = self.coordinator.data or {}
+        pd = data.get(self._panel_id) or {}
+        return pd.get("PanelName") or self._display_label
+
+    @property
+    def name(self) -> str:
+        return f"Panel {self._current_label} {self._prop_name}"
+
+    @property
     def native_value(self):
-        value = self.coordinator.data.get(self._panel_id, {}).get(self._param)
+        data = self.coordinator.data
+        if not data:
+            _LOGGER.debug("No data yet for panel — coordinator is None")
+            return None
+
+        panel_data = data.get(self._panel_id)
+        if not panel_data:
+            return None
+
+        value = panel_data.get(self._param)
+
         try:
             return round(float(value), 2) if value is not None else None
         except (ValueError, TypeError):
             return None
+    
 
     @property
     def extra_state_attributes(self):
@@ -309,9 +375,218 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
             "mp": self._layout.get("MP"),
         }
 
+class _EnergyIntegrator:
+    """Integrazione trapezoidale semplice da W a kWh."""
+    def __init__(self):
+        self.last_ts = None
+        self.last_w = None
+        self.kwh = 0.0
+
+    def update(self, w: float, now=None) -> float:
+        if w is None:
+            return self.kwh
+        now = now or dt_util.utcnow()
+        if self.last_ts is None:
+            self.last_ts = now
+            self.last_w = float(w)
+            return self.kwh
+        dt_s = (now - self.last_ts).total_seconds()
+        if dt_s > 0:
+            w0 = float(self.last_w)
+            w1 = float(w)
+            self.kwh += ((w0 + w1) / 2.0) * dt_s / 3600.0 / 1000.0
+            self.last_ts = now
+            self.last_w = w1
+        return self.kwh
+
+
+class TigoPanelEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(self, coordinator, panel_id, layout_info, parent_info, cca_prefix, display_label=None):
+        super().__init__(coordinator)
+        self._panel_id = panel_id
+        self._layout = layout_info or {}
+        self._parent_info = parent_info or {}
+        self._display_label = display_label or panel_id
+        self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy"
+        self._integrator = _EnergyIntegrator()
+        self._kwh = 0.0
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
+            "name": f"Panel {self._display_label}",
+            "manufacturer": "Tigo",
+            "model": self._layout.get("type", "Tigo Panel"),
+            "sw_version": self._layout.get("channel", "unknown"),
+            "hw_version": self._layout.get("serial", panel_id),
+            "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
+        }
+
+    @property
+    def _current_label(self) -> str:
+        data = self.coordinator.data or {}
+        pd = data.get(self._panel_id) or {}
+        return pd.get("PanelName") or self._display_label
+
+    @property
+    def name(self) -> str:
+        return f"Panel {self._current_label} Energy"
+
+    async def async_added_to_hass(self):
+        last = await self.async_get_last_state()
+        if last and last.state not in (None, "unknown", "unavailable"):
+            try:
+                self._integrator.kwh = float(last.state)
+                self._kwh = self._integrator.kwh
+            except (TypeError, ValueError):
+                pass
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_coordinator_update))
+        await self._async_integrate_once()
+        self.async_write_ha_state()
+    
+
+    async def _async_integrate_once(self):
+        coord_data = self.coordinator.data or {}
+        pd = coord_data.get(self._panel_id) or {}
+
+        w_raw = pd.get("Pin")
+        w = float(w_raw) if w_raw is not None else None
+        if w is not None and w < 0:
+            w = 0.0
+
+        now = dt_util.utcnow()
+        self._kwh = round(self._integrator.update(w, now), 3)
+
+    def _handle_coordinator_update(self):
+        self.hass.async_create_task(self._async_integrate_then_write())
+
+    async def _async_integrate_then_write(self):
+        await self._async_integrate_once()
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self):
+        return self._kwh
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "serial": self._layout.get("serial"),
+            "channel": self._layout.get("channel"),
+            "source": "Pin (power) trapezoidal integration on coordinator updates",
+        }
+
+class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:calendar-clock"
+    _attr_entity_registry_enabled_default = True
+
+    def __init__(self, coordinator, period: str, total_entity: TigoPanelEnergy,
+                 panel_id: str, cca_prefix: str, display_label: str = None):
+        super().__init__(coordinator)
+        self._period = period
+        self._total_entity = total_entity
+        self._panel_id = panel_id
+        self._display_label = display_label or panel_id
+        self._attr_unique_id = f"{cca_prefix}_tigo_{panel_id}_energy_{period}"
+        self._baseline = 0.0
+        self._period_key = None
+        self._value = 0.0
+        self._last_reset: datetime | None = None
+
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{cca_prefix}_{panel_id}")},
+            "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
+        }
+
+    @property
+    def _current_label(self) -> str:
+        data = self.coordinator.data or {}
+        pd = data.get(self._panel_id) or {}
+        return pd.get("PanelName") or self._display_label
+
+    @property
+    def name(self) -> str:
+        return f"Panel {self._current_label} Energy {self._period.capitalize()}"
+
+    def _current_period_key(self):
+        now = dt_util.now()
+        return now.strftime("%Y-%m-%d") if self._period == "day" else now.strftime("%Y-%m")
+
+    async def async_added_to_hass(self):
+        last = await self.async_get_last_state()
+        if last:
+            if last.attributes and "baseline" in last.attributes:
+                try:
+                    self._baseline = float(last.attributes["baseline"])
+                except (TypeError, ValueError):
+                    pass
+            if last.attributes and "period_key" in last.attributes:
+                self._period_key = last.attributes["period_key"]
+            if last.attributes and "last_reset" in last.attributes:
+                try:
+                    self._last_reset = dt_util.parse_datetime(last.attributes["last_reset"])
+                except (TypeError, ValueError, AttributeError):
+                    pass
+            if last.state not in (None, "unknown", "unavailable"):
+                try:
+                    self._value = float(last.state)
+                except (TypeError, ValueError):
+                    pass
+
+        self.async_on_remove(self.coordinator.async_add_listener(self._handle_update))
+        await self._async_recompute()
+        self.async_write_ha_state()
+    
+
+    async def _async_recompute(self):
+        total = self._total_entity.native_value
+        if total is None:
+            return
+        key_now = self._current_period_key()
+        if self._period_key != key_now:
+            self._baseline = float(total)
+            self._period_key = key_now
+            self._last_reset = dt_util.utcnow()
+        self._value = round(max(0.0, float(total) - float(self._baseline)), 3)
+
+    def _handle_update(self):
+        self.hass.async_create_task(self._async_recompute_then_write())
+
+    async def _async_recompute_then_write(self):
+        # sleep(0) cede il controllo: consente a TigoPanelEnergy di integrare
+        # il nuovo valore dal coordinator prima che leggiamo native_value
+        await asyncio.sleep(0)
+        await self._async_recompute()
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self):
+        return self._value
+
+    @property
+    def last_reset(self):
+        """Segnala a HA quando il periodo è stato azzerato (richiesto da TOTAL)."""
+        return self._last_reset
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "baseline": round(self._baseline, 3),
+            "period_key": self._period_key,
+            "period": self._period,
+            "last_reset": self._last_reset.isoformat() if self._last_reset else None,
+            "source_total_entity": self._total_entity.entity_id if self._total_entity.entity_id else None,
+        }
 
 class TigoSystemSensor(CoordinatorEntity, SensorEntity):
-    def __init__(self, name, key, unit, unique_id, coordinator, device_class=None, icon=None):
+    def __init__(self, name, key, unit, unique_id, coordinator, cca_prefix, device_class=None, icon=None):
         super().__init__(coordinator)
         self._attr_name = name
         self._attr_unique_id = unique_id
@@ -320,12 +595,11 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = device_class
         self._attr_icon = icon
 
-        # Assegna state_class solo se è energia
         if device_class == SensorDeviceClass.ENERGY:
             self._attr_state_class = SensorStateClass.TOTAL
 
         self._attr_device_info = {
-            "identifiers": {(DOMAIN, "tigo_system")},
+            "identifiers": {(DOMAIN, f"{cca_prefix}_tigo_system")},
             "name": "Tigo Local System",
             "manufacturer": "Tigo",
         }
@@ -333,8 +607,22 @@ class TigoSystemSensor(CoordinatorEntity, SensorEntity):
 
     @property
     def native_value(self):
-        return self.coordinator.data.get(self._key)
+        value = self.coordinator.data.get(self._key)
 
+        if isinstance(value, dict):
+            try:
+                value = list(value.values())[-1]
+            except Exception as e:
+                _LOGGER.warning("Invalid dict structure for %s: %s", self._key, e)
+                value = None
+
+        if self.device_class == SensorDeviceClass.ENERGY:
+            try:
+                return round(float(value), 2) if value is not None else None
+            except (ValueError, TypeError):
+                _LOGGER.warning("Non-numeric value for energy sensor %s: %s", self._key, value)
+                return None
+        return value
 
     @property
     def extra_state_attributes(self):
