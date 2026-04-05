@@ -302,8 +302,7 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         self._attr_device_class = device_class
         self._attr_state_class = state_class
         self._attr_icon = icon
-        
-        
+
         serial = self._layout.get("serial", panel_id)
         channel = self._layout.get("channel", "unknown")
         #_LOGGER.debug("Seriale: %s- Channel: %s", serial, channel)
@@ -319,8 +318,8 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
             "name": f"Panel {self._display_label}",
             "manufacturer": "Tigo",
             "model": self._layout.get("type", "Tigo Panel"),
-            "sw_version": serial,
-            "hw_version": channel,
+            "sw_version": channel,
+            "hw_version": serial,
             "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
         }
 
@@ -422,8 +421,8 @@ class TigoPanelEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
             "name": f"Panel {self._display_label}",
             "manufacturer": "Tigo",
             "model": self._layout.get("type", "Tigo Panel"),
-            "sw_version": self._layout.get("serial", panel_id),
-            "hw_version": self._layout.get("channel", "unknown"),
+            "sw_version": self._layout.get("channel", "unknown"),
+            "hw_version": self._layout.get("serial", panel_id),
             "via_device": (DOMAIN, f"{cca_prefix}_tigo_system"),
         }
 
