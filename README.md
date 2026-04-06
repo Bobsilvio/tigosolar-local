@@ -5,7 +5,6 @@
 Se ti piace il mio lavoro e vuoi che continui nello sviluppo delle card, puoi offrirmi un caffè.\
 If you like my work and want me to continue developing the cards, you can buy me a coffee.
 
-
 [![PayPal](https://img.shields.io/badge/Donate-PayPal-%2300457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/donate/?hosted_button_id=Z6KY9V6BBZ4BN)
 
 Non dimenticare di seguirmi sui social:\
@@ -40,8 +39,6 @@ This integration can be installed manually or via HACS when available.
 
 [![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=bobsilvio&repository=tigosolar-local&category=integration)
 
----
-
 ## MANUAL INSTALLATION
 
 1. Copy the `tigo` directory into `/config/custom_components/`.
@@ -52,7 +49,8 @@ This integration can be installed manually or via HACS when available.
 
 4. Enter the **local IP address** of your Tigo CCA or ESP32 panel (e.g., `192.168.1.100`).
 
-> ⚠️ Do **not** include `http://` or use hostnames like `tigo.local`.
+> [!IMPORTANT]
+> Do **not** include `http://` or use hostnames like `tigo.local`.
 
 ---
 
@@ -153,4 +151,4 @@ This project is inspired by reverse-engineering efforts and aims to bring **offl
 
 ## 📄 License
 
-This project is licensed under the MIT License.
+This project is licensed under the [MIT License](LICENSE).
