@@ -33,6 +33,10 @@ If the integration stops working and you can’t see any data from Tigo, you may
 Open the Tigo app on your phone and move as close as possible to the CCA to establish a Bluetooth connection. Then update the CCA firmware.
 Once it reboots, the integration should start working again.
 
+> [!IMPORTANT]
+> If your CCA firmware is **>= 4.0.4**, the local endpoints are password-locked and local data is no
+> longer accessible. In that case use the **Cloud source** — see [Cloud source](#cloud-source-cca-firmware--404) below.
+
 ## HACS
 
 This integration can be installed manually or via HACS when available.
@@ -48,6 +52,8 @@ This integration can be installed manually or via HACS when available.
 3. Go to **Settings → Devices & Services → Add Integration**, and search for **Tigo Local**.
 
 4. Enter the **local IP address** of your Tigo CCA or ESP32 panel (e.g., `192.168.1.100`).
+   On CCA firmware **>= 4.0.4** the setup then asks for your **Tigo account username and password**
+   and uses the [Cloud source](#cloud-source-cca-firmware--404).
 
 > [!IMPORTANT]
 > Do **not** include `http://` or use hostnames like `tigo.local`.
@@ -74,8 +80,30 @@ This integration can be installed manually or via HACS when available.
 
 ## 🔗 Supported Sources
 
-- **CCA** – Tigo Cloud Connect Advanced
+- **CCA** – Tigo Cloud Connect Advanced (local)
 - **ESP32** – ESP32-based Tigo panel monitoring firmware ([project link](https://github.com/Bobsilvio/tigo_server))
+- **Cloud** – Tigo account (`mapi.tigoenergy.com`), used when the CCA firmware (>= 4.0.4) password-locks the local endpoints
+
+---
+
+## Cloud source (CCA firmware >= 4.0.4)
+
+Newer CCA firmware (**>= 4.0.4**) password-locks the local `/cgi-bin` endpoints, so the old
+`Tigo` / `$olar` credentials stop working and local data becomes unreachable.
+
+To keep the integration working, a **third source** was added. During setup you still enter the
+local IP first: the integration **automatically detects the firmware** and, if the local data is
+locked, it asks for your **Tigo account username and password** and switches to the cloud source
+(replicating what the official Tigo app does). If it doesn't switch automatically, tick the
+**"Force cloud"** checkbox in the first setup step.
+
+> [!NOTE]
+> This is a **workaround**. On a Basic (non-premium) Tigo account the cloud exposes, **per panel**,
+> only **Power (W)**, **Energy Today (kWh)** and **Reclaimed Power (W)** — not voltage/current/
+> temperature/RSSI. System totals (current/peak power, day/week/month/year/lifetime energy,
+> reclaimed) are available too.
+
+<img src="https://github.com/Bobsilvio/tigosolar-local/releases/download/v3.1.0/tigo-cloud-system.png" alt="Cloud system sensors" width="600"> <img src="https://github.com/Bobsilvio/tigosolar-local/releases/download/v3.1.0/tigo-cloud-panel.png" alt="Cloud per-panel sensors" width="600">
 
 ---
 
