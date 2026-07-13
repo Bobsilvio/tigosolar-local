@@ -44,6 +44,14 @@ CLOUD_HEADERS = {
 
 # --- Scan interval (opzioni) ---
 OPT_SCAN_INTERVAL = "scan_interval"          # chiave opzione
-SCAN_INTERVAL_DEFAULT_SEC = 30                # default (secondi)
-SCAN_INTERVAL_MIN_SEC = 5                     # minimo consigliato
+SCAN_INTERVAL_DEFAULT_SEC = 30                # default locale (secondi)
+SCAN_INTERVAL_MIN_SEC = 5                     # minimo consigliato (locale)
 SCAN_INTERVAL_MAX_SEC = 600                   # massimo (10 min)
+
+# --- Scan interval sorgente CLOUD ---
+# I dati cloud NON sono realtime: la serie per-pannello è a slot di 15 minuti
+# e il caricamento CCA->cloud avviene a intervalli di ~10-15 min. Un polling
+# frequente non dà dati più freschi e rischia il throttle (HTTP 429).
+CLOUD_SCAN_INTERVAL_DEFAULT_SEC = 300        # default cloud (5 min)
+CLOUD_SCAN_INTERVAL_MIN_SEC = 120            # minimo cloud (anti-throttle)
+CLOUD_SCAN_INTERVAL_MAX_SEC = 3600           # massimo cloud (1 ora)

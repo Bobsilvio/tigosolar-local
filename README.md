@@ -103,6 +103,12 @@ locked, it asks for your **Tigo account username and password** and switches to 
 > temperature/RSSI. System totals (current/peak power, day/week/month/year/lifetime energy,
 > reclaimed) are available too.
 
+> [!WARNING]
+> Cloud data is **not real-time**. The per-panel series is published in **15-minute** slots and the
+> CCA→cloud upload happens every ~10–15 min, so values can lag by several minutes. The cloud source
+> therefore polls every **5 minutes by default** (minimum 120 s) to stay well under the API rate
+> limit — polling faster does **not** give fresher data.
+
 <img src="https://github.com/Bobsilvio/tigosolar-local/releases/download/v3.1.0/tigo-cloud-system.png" alt="Cloud system sensors" width="600"> <img src="https://github.com/Bobsilvio/tigosolar-local/releases/download/v3.1.0/tigo-cloud-panel.png" alt="Cloud per-panel sensors" width="600">
 
 ---

@@ -181,6 +181,9 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
             SCAN_INTERVAL_DEFAULT_SEC,
             SCAN_INTERVAL_MIN_SEC,
             SCAN_INTERVAL_MAX_SEC,
+            CLOUD_SCAN_INTERVAL_DEFAULT_SEC,
+            CLOUD_SCAN_INTERVAL_MIN_SEC,
+            CLOUD_SCAN_INTERVAL_MAX_SEC,
         )
         errors = {}
 
@@ -189,18 +192,23 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
         )
         is_cloud = source == SOURCE_CLOUD
 
+        # Range e default dello scan interval dipendono dalla sorgente
+        scan_default = CLOUD_SCAN_INTERVAL_DEFAULT_SEC if is_cloud else SCAN_INTERVAL_DEFAULT_SEC
+        scan_min = CLOUD_SCAN_INTERVAL_MIN_SEC if is_cloud else SCAN_INTERVAL_MIN_SEC
+        scan_max = CLOUD_SCAN_INTERVAL_MAX_SEC if is_cloud else SCAN_INTERVAL_MAX_SEC
+
         current_scan = int(
             self._config_entry.options.get(
                 OPT_SCAN_INTERVAL,
-                self._config_entry.data.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC),
+                self._config_entry.data.get(OPT_SCAN_INTERVAL, scan_default),
             )
         )
 
         if user_input is not None:
-            scan_sec = user_input.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC)
+            scan_sec = user_input.get(OPT_SCAN_INTERVAL, scan_default)
             try:
                 scan_sec = int(scan_sec)
-                if not (SCAN_INTERVAL_MIN_SEC <= scan_sec <= SCAN_INTERVAL_MAX_SEC):
+                if not (scan_min <= scan_sec <= scan_max):
                     raise ValueError("scan_out_of_range")
 
                 data = {"source": source, OPT_SCAN_INTERVAL: scan_sec}
@@ -228,7 +236,7 @@ class TigoOptionsFlow(config_entries.OptionsFlow):
 
         scan_field = {
             vol.Required(OPT_SCAN_INTERVAL, default=current_scan): vol.All(
-                vol.Coerce(int), vol.Range(min=SCAN_INTERVAL_MIN_SEC, max=SCAN_INTERVAL_MAX_SEC)
+                vol.Coerce(int), vol.Range(min=scan_min, max=scan_max)
             )
         }
 

@@ -15,6 +15,8 @@ from .const import (
     SCAN_INTERVAL,                 # compat
     OPT_SCAN_INTERVAL,
     SCAN_INTERVAL_DEFAULT_SEC,
+    CLOUD_SCAN_INTERVAL_DEFAULT_SEC,
+    CLOUD_SCAN_INTERVAL_MIN_SEC,
     SOURCE_CLOUD,
     SOURCE_ESP,
     CONF_USERNAME,
@@ -86,13 +88,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def _async_update_method() -> dict:
         return await hass.async_add_executor_job(_with_retries, _sync_fetch, label)
 
-    # --- nuovo: leggi lo scan interval dalle opzioni (fallback al default/vecchia costante) ---
-    scan_seconds = int(
+    # Default e minimo dipendono dalla sorgente: il cloud usa un intervallo più
+    # ampio (dati non realtime, ~15 min) e un floor anti-throttle.
+    is_cloud = source == SOURCE_CLOUD
+    default_scan = CLOUD_SCAN_INTERVAL_DEFAULT_SEC if is_cloud else SCAN_INTERVAL_DEFAULT_SEC
+
+    def _clamp_scan(value: int) -> int:
+        return max(value, CLOUD_SCAN_INTERVAL_MIN_SEC) if is_cloud else value
+
+    # --- nuovo: leggi lo scan interval dalle opzioni (fallback al default per sorgente) ---
+    scan_seconds = _clamp_scan(int(
         entry.options.get(
             OPT_SCAN_INTERVAL,
-            entry.data.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC),
+            entry.data.get(OPT_SCAN_INTERVAL, default_scan),
         )
-    )
+    ))
     update_interval = timedelta(seconds=scan_seconds) if scan_seconds > 0 else SCAN_INTERVAL
 
     coordinator = DataUpdateCoordinator(
@@ -106,12 +116,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # --- nuovo: listener delle opzioni per applicare subito il nuovo intervallo ---
     async def _options_updated(hass: HomeAssistant, updated_entry: ConfigEntry) -> None:
-        new_scan = int(
+        new_scan = _clamp_scan(int(
             updated_entry.options.get(
                 OPT_SCAN_INTERVAL,
-                updated_entry.data.get(OPT_SCAN_INTERVAL, SCAN_INTERVAL_DEFAULT_SEC),
+                updated_entry.data.get(OPT_SCAN_INTERVAL, default_scan),
             )
-        )
+        ))
         coordinator.update_interval = timedelta(seconds=new_scan)
         _LOGGER.info("⏱️ Tigo scan interval aggiornato a %ss", new_scan)
         # opzionale: triggera un refresh immediato
