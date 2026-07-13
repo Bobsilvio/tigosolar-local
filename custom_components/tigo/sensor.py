@@ -14,7 +14,7 @@ from homeassistant.util import dt as dt_util
 
 import calendar
 
-from .const import DOMAIN, _LOGGER
+from .const import DOMAIN, SOURCE_CLOUD, _LOGGER
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_layout_from_ip, fetch_daily_energy, fetch_device_info
 
 from homeassistant.const import (
@@ -70,7 +70,7 @@ PANEL_PROPERTIES = {
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    _LOGGER.debug("Setting up Tigo local-only sensors")
+    _LOGGER.debug("Setting up Tigo sensors")
 
     coordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
     panel_data = coordinator.data
@@ -78,6 +78,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     source = getattr(coordinator, "data_source", entry.options.get("source", "CCA"))
     _LOGGER.debug("Detected Tigo source: %s", source)
+
+    if source == SOURCE_CLOUD:
+        await _setup_cloud_sensors(hass, entry, async_add_entities)
+        return
 
     safe_ip = ip_address.replace(".", "")
     cca_prefix = f"{source[:3].lower()}_{safe_ip}"
@@ -584,6 +588,269 @@ class TigoPanelPeriodEnergy(CoordinatorEntity, SensorEntity, RestoreEntity):
             "last_reset": self._last_reset.isoformat() if self._last_reset else None,
             "source_total_entity": self._total_entity.entity_id if self._total_entity.entity_id else None,
         }
+
+# =====================================================================
+# Sorgente CLOUD (firmware locale >= 4.0.4)
+# =====================================================================
+
+async def _setup_cloud_sensors(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
+    """Crea le entità per la sorgente cloud Tigo.
+
+    Per-pannello il cloud espone solo l'energia giornaliera (Wh); i totali di
+    sistema includono potenza istantanea ed energie day/week/month/year/lifetime.
+    """
+    store = hass.data[DOMAIN][entry.entry_id]
+    coordinator = store["coordinator"]
+    system_id = store.get("system_id")
+    layout = store.get("cloud_layout") or {}
+
+    prefix = f"tigo_cloud_{system_id}"
+
+    device_registry = dr.async_get(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, f"{prefix}_system")},
+        manufacturer="Tigo",
+        name=f"Tigo Cloud System ({system_id})",
+        model="Tigo Cloud",
+        suggested_area="Solar",
+    )
+
+    entities: list = []
+
+    # --- Sensori di sistema ---
+    system_specs = [
+        ("power_now_w", "Tigo Power", UnitOfPower.WATT, SensorDeviceClass.POWER,
+         SensorStateClass.MEASUREMENT, "mdi:solar-power", False),
+        ("power_day_max_w", "Tigo Power Peak Today", UnitOfPower.WATT, SensorDeviceClass.POWER,
+         SensorStateClass.MEASUREMENT, "mdi:chart-bell-curve", False),
+        ("energy_today_wh", "Tigo Today Production", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+         SensorStateClass.TOTAL, "mdi:lightning-bolt", True),
+        ("energy_week_wh", "Tigo Week Production", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+         SensorStateClass.TOTAL, "mdi:calendar-week", True),
+        ("energy_month_wh", "Tigo Month Production", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+         SensorStateClass.TOTAL, "mdi:calendar-month", True),
+        ("energy_year_wh", "Tigo Year Production", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+         SensorStateClass.TOTAL, "mdi:calendar", True),
+        ("energy_lifetime_wh", "Tigo Lifetime Production", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+         SensorStateClass.TOTAL_INCREASING, "mdi:counter", True),
+        ("reclaimed_today_wh", "Tigo Reclaimed Today", UnitOfEnergy.KILO_WATT_HOUR, SensorDeviceClass.ENERGY,
+         SensorStateClass.TOTAL, "mdi:recycle", True),
+    ]
+    for key, name, unit, dclass, sclass, icon, is_energy in system_specs:
+        entities.append(
+            TigoCloudSystemSensor(coordinator, prefix, key, name, unit, dclass, sclass, icon, is_energy)
+        )
+
+    # --- Sensori per pannello: energia giornaliera + potenza istantanea ---
+    panels = (coordinator.data or {}).get("panels", {})
+    for oid, info in panels.items():
+        merged = dict(layout.get(oid, {}))
+        merged.update(info)
+        entities.append(TigoCloudPanelEnergy(coordinator, prefix, oid, merged))
+        entities.append(TigoCloudPanelPower(coordinator, prefix, oid, merged))
+        entities.append(TigoCloudPanelReclaimed(coordinator, prefix, oid, merged))
+
+    async_add_entities(entities)
+
+
+def _wh_to_kwh(v):
+    try:
+        return round(float(v) / 1000.0, 3) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _midnight_today():
+    now = dt_util.now()
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _period_reset(key: str):
+    """last_reset per i sensori energia di periodo."""
+    now = dt_util.now()
+    if key == "energy_today_wh" or key == "reclaimed_today_wh":
+        return _midnight_today()
+    if key == "energy_week_wh":
+        start = now - timedelta(days=now.weekday())
+        return start.replace(hour=0, minute=0, second=0, microsecond=0)
+    if key == "energy_month_wh":
+        return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if key == "energy_year_wh":
+        return now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return None
+
+
+class TigoCloudSystemSensor(CoordinatorEntity, SensorEntity):
+    """Sensore di sistema dalla sorgente cloud."""
+
+    def __init__(self, coordinator, prefix, key, name, unit, device_class, state_class, icon, is_energy):
+        super().__init__(coordinator)
+        self._key = key
+        self._is_energy = is_energy
+        self._attr_name = name
+        self._attr_unique_id = f"{prefix}_{key}"
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_state_class = state_class
+        self._attr_icon = icon
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{prefix}_system")},
+            "name": "Tigo Cloud System",
+            "manufacturer": "Tigo",
+        }
+
+    @property
+    def native_value(self):
+        system = (self.coordinator.data or {}).get("system", {})
+        value = system.get(self._key)
+        if self._is_energy:
+            return _wh_to_kwh(value)
+        try:
+            return round(float(value), 2) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def last_reset(self):
+        if self._attr_state_class == SensorStateClass.TOTAL:
+            return _period_reset(self._key)
+        return None
+
+    @property
+    def extra_state_attributes(self):
+        system = (self.coordinator.data or {}).get("system", {})
+        return {"last_data": system.get("last_data")}
+
+
+class TigoCloudPanelEnergy(CoordinatorEntity, SensorEntity):
+    """Energia giornaliera di un singolo pannello (dato cloud)."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_icon = "mdi:solar-panel"
+
+    def __init__(self, coordinator, prefix, panel_id, info):
+        super().__init__(coordinator)
+        self._prefix = prefix
+        self._panel_id = str(panel_id)
+        self._info = info or {}
+        label = self._info.get("name") or self._panel_id
+        self._attr_unique_id = f"{prefix}_{self._panel_id}_energy_today"
+        self._attr_name = f"Panel {label} Energy Today"
+
+        serial = self._info.get("serial") or self._panel_id
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{prefix}_{self._panel_id}")},
+            "name": f"Panel {label}",
+            "manufacturer": "Tigo",
+            "model": "Tigo Panel",
+            "hw_version": serial,
+            "via_device": (DOMAIN, f"{prefix}_system"),
+        }
+        area = self._info.get("string") or self._info.get("inverter")
+        if area:
+            self._attr_device_info["suggested_area"] = area
+
+    def _panel(self) -> dict:
+        return ((self.coordinator.data or {}).get("panels", {}) or {}).get(self._panel_id, {})
+
+    @property
+    def native_value(self):
+        return _wh_to_kwh(self._panel().get("energy_today_wh"))
+
+    @property
+    def last_reset(self):
+        return _midnight_today()
+
+    @property
+    def extra_state_attributes(self):
+        p = self._panel()
+        return {
+            "serial": self._info.get("serial"),
+            "short_serial": self._info.get("short_serial"),
+            "channel": self._info.get("channel"),
+            "string": self._info.get("string"),
+            "inverter": self._info.get("inverter"),
+            "watt_rating": self._info.get("watt_rating"),
+            "last_data": p.get("last_data"),
+        }
+
+
+class TigoCloudPanelPower(CoordinatorEntity, SensorEntity):
+    """Potenza istantanea di un singolo pannello (dato cloud, endpoint summary)."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_icon = "mdi:solar-power"
+
+    def __init__(self, coordinator, prefix, panel_id, info):
+        super().__init__(coordinator)
+        self._prefix = prefix
+        self._panel_id = str(panel_id)
+        self._info = info or {}
+        label = self._info.get("name") or self._panel_id
+        self._attr_unique_id = f"{prefix}_{self._panel_id}_power"
+        self._attr_name = f"Panel {label} Power"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{prefix}_{self._panel_id}")},
+            "via_device": (DOMAIN, f"{prefix}_system"),
+        }
+
+    def _panel(self) -> dict:
+        return ((self.coordinator.data or {}).get("panels", {}) or {}).get(self._panel_id, {})
+
+    @property
+    def native_value(self):
+        val = self._panel().get("power_w")
+        try:
+            return round(float(val), 2) if val is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @property
+    def extra_state_attributes(self):
+        p = self._panel()
+        return {
+            "serial": self._info.get("serial"),
+            "string": self._info.get("string"),
+            "sample_time": p.get("power_time"),
+        }
+
+
+class TigoCloudPanelReclaimed(CoordinatorEntity, SensorEntity):
+    """Potenza recuperata istantanea di un singolo pannello (dato cloud)."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
+    _attr_icon = "mdi:recycle"
+
+    def __init__(self, coordinator, prefix, panel_id, info):
+        super().__init__(coordinator)
+        self._panel_id = str(panel_id)
+        self._info = info or {}
+        label = self._info.get("name") or self._panel_id
+        self._attr_unique_id = f"{prefix}_{self._panel_id}_reclaimed"
+        self._attr_name = f"Panel {label} Reclaimed Power"
+        self._attr_device_info = {
+            "identifiers": {(DOMAIN, f"{prefix}_{self._panel_id}")},
+            "via_device": (DOMAIN, f"{prefix}_system"),
+        }
+
+    def _panel(self) -> dict:
+        return ((self.coordinator.data or {}).get("panels", {}) or {}).get(self._panel_id, {})
+
+    @property
+    def native_value(self):
+        val = self._panel().get("reclaimed_w")
+        try:
+            return round(float(val), 2) if val is not None else None
+        except (TypeError, ValueError):
+            return None
+
 
 class TigoSystemSensor(CoordinatorEntity, SensorEntity):
     def __init__(self, name, key, unit, unique_id, coordinator, cca_prefix, device_class=None, icon=None):

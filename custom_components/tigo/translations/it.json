@@ -3,14 +3,54 @@
     "step": {
       "user": {
         "title": "Configurazione Tigo",
-        "description": "Inserisci l'indirizzo IP locale del tuo Tigo CCA (es. 192.168.1.100)",
+        "description": "Inserisci l'indirizzo IP locale del tuo Tigo CCA (es. 192.168.1.100). Con firmware >= 4.0.4 verrà richiesto l'accesso all'account Tigo.",
         "data": {
-          "ip_address": "Indirizzo IP"
+          "ip_address": "Indirizzo IP",
+          "source": "Sorgente",
+          "force_cloud": "Forza cloud (per test, ignora il firmware)"
+        }
+      },
+      "cloud": {
+        "title": "Accesso account Tigo",
+        "description": "{fw_info}",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "select_system": {
+        "title": "Seleziona impianto",
+        "data": {
+          "system_id": "Impianto"
         }
       }
     },
     "error": {
-      "invalid_ip": "Formato dell'indirizzo IP non valido."
+      "invalid_ip": "Formato dell'indirizzo IP non valido.",
+      "cannot_connect": "Impossibile connettersi al dispositivo o al servizio Tigo.",
+      "invalid_auth": "Email o password non validi.",
+      "no_systems": "Nessun impianto trovato per questo account."
+    },
+    "abort": {
+      "already_configured": "Questo impianto è già configurato."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Opzioni Tigo",
+        "data": {
+          "ip_address": "Indirizzo IP",
+          "source": "Sorgente",
+          "username": "Email",
+          "password": "Password (lascia vuoto per non cambiare)",
+          "scan_interval": "Intervallo di aggiornamento (secondi)"
+        }
+      }
+    },
+    "error": {
+      "invalid_ip": "Formato dell'indirizzo IP non valido.",
+      "invalid_scan_interval": "Intervallo di aggiornamento fuori intervallo."
     }
   }
 }

@@ -3,14 +3,54 @@
     "step": {
       "user": {
         "title": "Konfigurácia Tigo Integrácie",
-        "description": "Vložte lokálnu IP adresu vášho Tigo CCA.",
+        "description": "Vložte lokálnu IP adresu vášho Tigo CCA (napr. 192.168.1.100). Pri firmvéri >= 4.0.4 budete vyzvaní na prihlásenie do účtu Tigo.",
         "data": {
-          "ip_address": "IP adresa"
+          "ip_address": "IP adresa",
+          "source": "Zdroj",
+          "force_cloud": "Vynútiť cloud (na test, ignoruje firmvér)"
+        }
+      },
+      "cloud": {
+        "title": "Prihlásenie do účtu Tigo",
+        "description": "{fw_info}",
+        "data": {
+          "username": "Email",
+          "password": "Heslo"
+        }
+      },
+      "select_system": {
+        "title": "Vyberte systém",
+        "data": {
+          "system_id": "Systém"
         }
       }
     },
     "error": {
-      "invalid_ip": "Nesprávny formát IP adresy."
+      "invalid_ip": "Nesprávny formát IP adresy.",
+      "cannot_connect": "Nedá sa pripojiť k zariadeniu alebo službe Tigo.",
+      "invalid_auth": "Neplatný email alebo heslo.",
+      "no_systems": "Pre tento účet sa nenašiel žiadny systém."
+    },
+    "abort": {
+      "already_configured": "Tento systém je už nakonfigurovaný."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Možnosti Tigo",
+        "data": {
+          "ip_address": "IP adresa",
+          "source": "Zdroj",
+          "username": "Email",
+          "password": "Heslo (nechajte prázdne pre zachovanie)",
+          "scan_interval": "Interval aktualizácie (sekundy)"
+        }
+      }
+    },
+    "error": {
+      "invalid_ip": "Nesprávny formát IP adresy.",
+      "invalid_scan_interval": "Interval aktualizácie mimo rozsahu."
     }
   }
 }

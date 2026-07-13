@@ -3,14 +3,54 @@
     "step": {
       "user": {
         "title": "Tigo Setup",
-        "description": "Enter the local IP of your Tigo CCA.",
+        "description": "Enter the local IP of your Tigo CCA (e.g. 192.168.1.100). With firmware >= 4.0.4 you will be asked to sign in to your Tigo account.",
         "data": {
-          "ip_address": "IP Address"
+          "ip_address": "IP Address",
+          "source": "Source",
+          "force_cloud": "Force cloud (for testing, ignore firmware)"
+        }
+      },
+      "cloud": {
+        "title": "Tigo account login",
+        "description": "{fw_info}",
+        "data": {
+          "username": "Email",
+          "password": "Password"
+        }
+      },
+      "select_system": {
+        "title": "Select system",
+        "data": {
+          "system_id": "System"
         }
       }
     },
     "error": {
-      "invalid_ip": "Invalid IP address format."
+      "invalid_ip": "Invalid IP address format.",
+      "cannot_connect": "Cannot connect to the device or the Tigo service.",
+      "invalid_auth": "Invalid email or password.",
+      "no_systems": "No system found for this account."
+    },
+    "abort": {
+      "already_configured": "This system is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tigo options",
+        "data": {
+          "ip_address": "IP Address",
+          "source": "Source",
+          "username": "Email",
+          "password": "Password (leave empty to keep current)",
+          "scan_interval": "Update interval (seconds)"
+        }
+      }
+    },
+    "error": {
+      "invalid_ip": "Invalid IP address format.",
+      "invalid_scan_interval": "Update interval out of range."
     }
   }
 }

@@ -15,6 +15,11 @@ from .const import (
     SCAN_INTERVAL,                 # compat
     OPT_SCAN_INTERVAL,
     SCAN_INTERVAL_DEFAULT_SEC,
+    SOURCE_CLOUD,
+    SOURCE_ESP,
+    CONF_USERNAME,
+    CONF_PASSWORD,
+    CONF_SYSTEM_ID,
     _LOGGER,
 )
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_data_from_ws
@@ -45,7 +50,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     source = entry.options.get("source") or entry.data.get("source") or "CCA"
 
-    if source == "ESP32_WS":
+    cloud_client = None
+    cloud_layout: dict = {}
+
+    if source == SOURCE_CLOUD:
+        from .tigo_cloud import TigoCloudClient
+
+        username = entry.options.get(CONF_USERNAME) or entry.data.get(CONF_USERNAME)
+        password = entry.options.get(CONF_PASSWORD) or entry.data.get(CONF_PASSWORD)
+        system_id = entry.data.get(CONF_SYSTEM_ID)
+        _LOGGER.debug("Using CLOUD source for Tigo system %s", system_id)
+
+        cloud_client = TigoCloudClient(username, password, system_id)
+        # Layout statico: letto una volta al setup (login incluso automaticamente)
+        try:
+            cloud_layout = await hass.async_add_executor_job(cloud_client.fetch_layout)
+        except Exception as e:
+            _LOGGER.warning("Layout cloud non disponibile al setup: %s", e)
+            cloud_layout = {}
+
+        def _sync_fetch() -> dict:
+            return cloud_client.fetch_all(cloud_layout)
+        label = f"CLOUD {system_id}"
+    elif source == SOURCE_ESP:
         _LOGGER.debug("Using WebSocket source for Tigo at %s", ip_address)
         def _sync_fetch() -> dict:
             return fetch_tigo_data_from_ws(f"ws://{ip_address}/ws")
@@ -119,6 +146,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
         "ip": ip_address,
+        "source": source,
+        "system_id": entry.data.get(CONF_SYSTEM_ID),
+        "cloud_client": cloud_client,
+        "cloud_layout": cloud_layout,
     }
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     return True

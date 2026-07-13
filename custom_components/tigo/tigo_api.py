@@ -1,3 +1,5 @@
+import re
+import socket
 import requests
 from datetime import datetime, timedelta
 import logging
@@ -5,7 +7,7 @@ import time
 import websocket
 import json
 from requests.adapters import HTTPAdapter
-from .const import AUTH_HEADER, _LOGGER
+from .const import AUTH_HEADER, FIRMWARE_CLOUD_MIN, _LOGGER
 
 _session: requests.Session | None = None
 
@@ -248,6 +250,62 @@ def fetch_daily_energy(ip: str) -> dict:
         "history": history,
         "history_named": history_named,
     }
+
+def _parse_version(software: str | None) -> tuple[int, ...] | None:
+    """Estrae una tupla di versione da una stringa tipo '4.0.4' o '4.0.4-abc'."""
+    if not software:
+        return None
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", str(software))
+    if not m:
+        return None
+    return tuple(int(x) for x in m.groups())
+
+
+def _tcp_reachable(ip: str, port: int = 80, timeout: float = 3.0) -> bool:
+    try:
+        with socket.create_connection((ip, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def probe_local(ip: str) -> dict:
+    """Sonda il CCA locale per decidere se usare la sorgente locale o il cloud.
+
+    Ritorna:
+      - reachable: il device risponde su TCP:80
+      - software: versione firmware se leggibile con la vecchia password
+      - local_ok: si sono ottenuti dati validi dei pannelli in locale
+      - requires_cloud: firmware >= FIRMWARE_CLOUD_MIN, oppure raggiungibile ma
+        senza accesso locale ai dati (password nuova) -> serve login cloud
+    """
+    reachable = _tcp_reachable(ip)
+    info = fetch_device_info(ip) if reachable else {}
+    software = info.get("software")
+    version = _parse_version(software)
+
+    local_ok = False
+    if reachable:
+        try:
+            local_ok = bool(fetch_tigo_data_from_ip(ip))
+        except Exception:
+            local_ok = False
+
+    if version is not None:
+        requires_cloud = version >= FIRMWARE_CLOUD_MIN
+    else:
+        # Versione non leggibile: se raggiungibile ma senza dati locali,
+        # il firmware nuovo ha bloccato il locale -> cloud.
+        requires_cloud = reachable and not local_ok
+
+    return {
+        "reachable": reachable,
+        "software": software,
+        "version": version,
+        "local_ok": local_ok,
+        "requires_cloud": requires_cloud,
+    }
+
 
 def fetch_device_info(ip: str) -> dict:
     url = f"http://{ip}/cgi-bin/mobile_api?cmd=DEVICE_INFO"
