@@ -9,6 +9,7 @@ SOURCE_CCA = "CCA"
 SOURCE_ESP = "ESP32_WS"
 SOURCE_CLOUD = "CLOUD"
 DATA_SOURCE = [SOURCE_CCA, SOURCE_ESP, SOURCE_CLOUD]
+LOCAL_SOURCES = [SOURCE_CCA, SOURCE_ESP]
 
 SCAN_INTERVAL = timedelta(seconds=60)
 AUTH_HEADER = {
@@ -19,39 +20,15 @@ AUTH_HEADER = {
 }
 
 # --- Cloud Tigo (firmware locale >= 4.0.4: endpoint locali protetti da password) ---
-CLOUD_BASE = "https://mapi.tigoenergy.com"
 # Soglia oltre la quale il firmware locale richiede login: si passa al cloud.
 FIRMWARE_CLOUD_MIN = (4, 0, 4)
 
-# Chiavi di configurazione per la sorgente cloud
-CONF_USERNAME = "username"
-CONF_PASSWORD = "password"
 CONF_SYSTEM_ID = "system_id"
 # Forza il cloud anche con firmware locale < 4.0.4 (test/debug)
 CONF_FORCE_CLOUD = "force_cloud"
-
-# Header inviati dall'app iPhone verso mapi.tigoenergy.com
-CLOUD_HEADERS = {
-    "accept": "application/json, text/plain, */*",
-    "origin": "capacitor://localhost",
-    "x-app-version": "5.4.6-04",
-    "accept-language": "en-US",
-    "user-agent": (
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) "
-        "AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148"
-    ),
-}
 
 # --- Scan interval (opzioni) ---
 OPT_SCAN_INTERVAL = "scan_interval"          # chiave opzione
 SCAN_INTERVAL_DEFAULT_SEC = 30                # default locale (secondi)
 SCAN_INTERVAL_MIN_SEC = 5                     # minimo consigliato (locale)
 SCAN_INTERVAL_MAX_SEC = 600                   # massimo (10 min)
-
-# --- Scan interval sorgente CLOUD ---
-# I dati cloud NON sono realtime: la serie per-pannello è a slot di 15 minuti
-# e il caricamento CCA->cloud avviene a intervalli di ~10-15 min. Un polling
-# frequente non dà dati più freschi e rischia il throttle (HTTP 429).
-CLOUD_SCAN_INTERVAL_DEFAULT_SEC = 300        # default cloud (5 min)
-CLOUD_SCAN_INTERVAL_MIN_SEC = 120            # minimo cloud (anti-throttle)
-CLOUD_SCAN_INTERVAL_MAX_SEC = 3600           # massimo cloud (1 ora)

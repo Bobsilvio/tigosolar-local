@@ -7,7 +7,7 @@ from typing import Callable
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.const import CONF_IP_ADDRESS
 
 from .const import (
@@ -15,16 +15,14 @@ from .const import (
     SCAN_INTERVAL,                 # compat
     OPT_SCAN_INTERVAL,
     SCAN_INTERVAL_DEFAULT_SEC,
-    CLOUD_SCAN_INTERVAL_DEFAULT_SEC,
-    CLOUD_SCAN_INTERVAL_MIN_SEC,
     SOURCE_CLOUD,
     SOURCE_ESP,
-    CONF_USERNAME,
-    CONF_PASSWORD,
-    CONF_SYSTEM_ID,
     _LOGGER,
 )
+from .migration import async_migrate_entry  # noqa: F401  (usato da HA)
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_data_from_ws
+
+PLATFORMS = ["sensor", "binary_sensor"]
 
 
 def _with_retries(fn: Callable[[], dict], label: str, attempts: int = 5, base_sleep: int = 15) -> dict:
@@ -39,7 +37,7 @@ def _with_retries(fn: Callable[[], dict], label: str, attempts: int = 5, base_sl
             if i < attempts:
                 import time as _t
                 _t.sleep(wait)
-    _LOGGER.warning("[%s] ancora non raggiungibile dopo %d tentativi: %s", label, attempts, last_err)
+    _LOGGER.debug("[%s] ancora non raggiungibile dopo %d tentativi: %s", label, attempts, last_err)
     raise last_err
 
 
@@ -52,29 +50,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
     source = entry.options.get("source") or entry.data.get("source") or "CCA"
 
-    cloud_client = None
-    cloud_layout: dict = {}
-
     if source == SOURCE_CLOUD:
-        from .tigo_cloud import TigoCloudClient
+        from .cloud import async_setup_cloud_entry
 
-        username = entry.options.get(CONF_USERNAME) or entry.data.get(CONF_USERNAME)
-        password = entry.options.get(CONF_PASSWORD) or entry.data.get(CONF_PASSWORD)
-        system_id = entry.data.get(CONF_SYSTEM_ID)
-        _LOGGER.debug("Using CLOUD source for Tigo system %s", system_id)
+        await async_setup_cloud_entry(hass, entry)
+        entry.async_on_unload(entry.add_update_listener(_async_reload))
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        return True
 
-        cloud_client = TigoCloudClient(username, password, system_id)
-        # Layout statico: letto una volta al setup (login incluso automaticamente)
-        try:
-            cloud_layout = await hass.async_add_executor_job(cloud_client.fetch_layout)
-        except Exception as e:
-            _LOGGER.warning("Layout cloud non disponibile al setup: %s", e)
-            cloud_layout = {}
-
-        def _sync_fetch() -> dict:
-            return cloud_client.fetch_all(cloud_layout)
-        label = f"CLOUD {system_id}"
-    elif source == SOURCE_ESP:
+    if source == SOURCE_ESP:
         _LOGGER.debug("Using WebSocket source for Tigo at %s", ip_address)
         def _sync_fetch() -> dict:
             return fetch_tigo_data_from_ws(f"ws://{ip_address}/ws")
@@ -86,23 +70,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         label = f"CCA {ip_address}"
 
     async def _async_update_method() -> dict:
-        return await hass.async_add_executor_job(_with_retries, _sync_fetch, label)
+        try:
+            return await hass.async_add_executor_job(_with_retries, _sync_fetch, label)
+        except Exception as e:
+            # UpdateFailed → HA logga una riga sola (niente traceback "Unexpected error")
+            # e segnala "recovered" al primo poll riuscito.
+            raise UpdateFailed(f"[{label}] {e}") from e
 
-    # Default e minimo dipendono dalla sorgente: il cloud usa un intervallo più
-    # ampio (dati non realtime, ~15 min) e un floor anti-throttle.
-    is_cloud = source == SOURCE_CLOUD
-    default_scan = CLOUD_SCAN_INTERVAL_DEFAULT_SEC if is_cloud else SCAN_INTERVAL_DEFAULT_SEC
+    default_scan = SCAN_INTERVAL_DEFAULT_SEC
 
-    def _clamp_scan(value: int) -> int:
-        return max(value, CLOUD_SCAN_INTERVAL_MIN_SEC) if is_cloud else value
-
-    # --- nuovo: leggi lo scan interval dalle opzioni (fallback al default per sorgente) ---
-    scan_seconds = _clamp_scan(int(
+    # --- leggi lo scan interval dalle opzioni ---
+    scan_seconds = int(
         entry.options.get(
             OPT_SCAN_INTERVAL,
             entry.data.get(OPT_SCAN_INTERVAL, default_scan),
         )
-    ))
+    )
     update_interval = timedelta(seconds=scan_seconds) if scan_seconds > 0 else SCAN_INTERVAL
 
     coordinator = DataUpdateCoordinator(
@@ -116,12 +99,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # --- nuovo: listener delle opzioni per applicare subito il nuovo intervallo ---
     async def _options_updated(hass: HomeAssistant, updated_entry: ConfigEntry) -> None:
-        new_scan = _clamp_scan(int(
+        new_scan = int(
             updated_entry.options.get(
                 OPT_SCAN_INTERVAL,
                 updated_entry.data.get(OPT_SCAN_INTERVAL, default_scan),
             )
-        ))
+        )
         coordinator.update_interval = timedelta(seconds=new_scan)
         _LOGGER.info("⏱️ Tigo scan interval aggiornato a %ss", new_scan)
         # opzionale: triggera un refresh immediato
@@ -157,16 +140,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "coordinator": coordinator,
         "ip": ip_address,
         "source": source,
-        "system_id": entry.data.get(CONF_SYSTEM_ID),
-        "cloud_client": cloud_client,
-        "cloud_layout": cloud_layout,
     }
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 
 
+async def _async_reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, ["sensor"])
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
     return unload_ok

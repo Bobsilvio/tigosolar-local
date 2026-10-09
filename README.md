@@ -16,11 +16,16 @@ Don't forget to follow me on social media:
 
 [![YouTube](https://img.shields.io/badge/Subscribe_YouTube-%23FF0000?style=for-the-badge&logo=youtube&logoColor=white)](https://www.youtube.com/@silviosmartalexa)
 
-# Tigo Local Integration for Home Assistant (v2)
+# Tigo Energy Integration for Home Assistant (Local + Cloud)
 
-A custom integration that connects Home Assistant to a **Tigo CCA** (Cloud Connect Advanced) or **ESP32-based Tigo panels** via the local network, without using cloud services or API keys. It fetches real-time and historical solar panel data directly from the device.
+A custom integration that connects Home Assistant to a **Tigo CCA** (Cloud Connect Advanced) or **ESP32-based Tigo panels** via the local network, or to your **Tigo cloud account**. It fetches per-panel and system solar data.
 
-⚠️ Not compatible with Tigosolar-online
+> [!IMPORTANT]
+> **Since v4.0.0 this integration replaces [tigosolar-online](https://github.com/Bobsilvio/tigosolar-online)**,
+> which is now archived. Its cloud engine (Tigo API v4 + v3 fallback, Premium support, backoff,
+> outage Repair, Energy Dashboard counter) is now the **Cloud source** of this integration.
+> Coming from tigosolar-online? See [Migrating from tigosolar-online](#migrating-from-tigosolar-online) —
+> your entities and history are kept.
 
 <img src="images/1.png" alt="Sample" width="600"> <img src="images/2.png" alt="Sample" width="600">
 <img src="images/3.png" alt="Sample" width="600">
@@ -35,7 +40,7 @@ Once it reboots, the integration should start working again.
 
 > [!IMPORTANT]
 > If your CCA firmware is **>= 4.0.4**, the local endpoints are password-locked and local data is no
-> longer accessible. In that case use the **Cloud source** — see [Cloud source](#cloud-source-cca-firmware--404) below.
+> longer accessible. In that case use the **Cloud source** — see [Cloud source](#cloud-source) below.
 
 ## HACS
 
@@ -49,11 +54,13 @@ This integration can be installed manually or via HACS when available.
 
 2. Restart Home Assistant.
 
-3. Go to **Settings → Devices & Services → Add Integration**, and search for **Tigo Local**.
+3. Go to **Settings → Devices & Services → Add Integration**, and search for **Tigo Energy**.
 
-4. Enter the **local IP address** of your Tigo CCA or ESP32 panel (e.g., `192.168.1.100`).
-   On CCA firmware **>= 4.0.4** the setup then asks for your **Tigo account username and password**
-   and uses the [Cloud source](#cloud-source-cca-firmware--404).
+4. Choose the source:
+   - **CCA** / **ESP32_WS**: enter the **local IP address** (e.g., `192.168.1.100`). On CCA firmware
+     **>= 4.0.4** the setup then asks for your **Tigo account email and password** and uses the
+     [Cloud source](#cloud-source).
+   - **CLOUD**: no IP needed, just your Tigo account (same credentials as the Tigo app).
 
 > [!IMPORTANT]
 > Do **not** include `http://` or use hostnames like `tigo.local`.
@@ -82,34 +89,67 @@ This integration can be installed manually or via HACS when available.
 
 - **CCA** – Tigo Cloud Connect Advanced (local)
 - **ESP32** – ESP32-based Tigo panel monitoring firmware ([project link](https://github.com/Bobsilvio/tigo_server))
-- **Cloud** – Tigo account (`mapi.tigoenergy.com`), used when the CCA firmware (>= 4.0.4) password-locks the local endpoints
+- **Cloud** – Tigo account (`mapi.tigoenergy.com`, legacy `api2.tigoenergy.com` as fallback), for CCA firmware >= 4.0.4 (local endpoints password-locked) or when you have no local access
 
 ---
 
-## Cloud source (CCA firmware >= 4.0.4)
+## Cloud source
 
-Newer CCA firmware (**>= 4.0.4**) password-locks the local `/cgi-bin` endpoints, so the old
-`Tigo` / `$olar` credentials stop working and local data becomes unreachable.
+Newer CCA firmware (**>= 4.0.4**) password-locks the local `/cgi-bin` endpoints, so local data
+becomes unreachable. The Cloud source reads the same data the official Tigo app shows.
 
-To keep the integration working, a **third source** was added. During setup you still enter the
-local IP first: the integration **automatically detects the firmware** and, if the local data is
-locked, it asks for your **Tigo account username and password** and switches to the cloud source
-(replicating what the official Tigo app does). If it doesn't switch automatically, tick the
-**"Force cloud"** checkbox in the first setup step.
+During setup either pick **CLOUD** directly, or enter the local IP: the integration **detects the
+firmware** and, if local data is locked, asks for your **Tigo account** and switches to the cloud.
+If it doesn't switch automatically, tick **"Force cloud"** in the first step.
 
-> [!NOTE]
-> This is a **workaround**. On a Basic (non-premium) Tigo account the cloud exposes, **per panel**,
-> only **Power (W)**, **Energy Today (kWh)** and **Reclaimed Power (W)** — not voltage/current/
-> temperature/RSSI. System totals (current/peak power, day/week/month/year/lifetime energy,
-> reclaimed) are available too.
+The cloud engine comes from [tigosolar-online](https://github.com/Bobsilvio/tigosolar-online)
+(v2, by [@TerryFrench](https://github.com/TerryFrench)):
+
+- **API selection**: `auto` (v4, fall back to v3), `v4` or `v3` — at setup and in **Options**.
+- **Token lifecycle**: token persisted across restarts, transparent re-login, **re-authentication** flow.
+- **Premium**: with a Tigo EI **Premium** subscription you also get per-panel **Voltage**, **Current**
+  and **Signal Strength** (disabled by default: enable the entities, or the toggles in Options).
+- **Resilience**: exponential backoff, strict respect of throttling (`429`/`503` + `Retry-After`),
+  a **Tigo API** connectivity `binary_sensor` and a **Repair** issue during prolonged outages.
+- **Efficient polling**: incremental per-minute fetch, night skip, CCA-cadence skip.
+- **Energy Dashboard**: `sensor.…_production` is a monotonic lifetime counter (`total_increasing`)
+  that survives restarts — add it under *Settings → Energy → Solar production*.
+- **Diagnostics**: *Settings → Devices & Services → Tigo → ⋯ → Download diagnostics* (secrets redacted).
+
+| Sensor | Basic account | Premium |
+|---|---|---|
+| System: Current Power, Production Today, Production (lifetime) | ✅ | ✅ |
+| Panel: Power, Energy (lifetime) | ✅ | ✅ |
+| Panel: Reclaimed Power | ✅ (disabled by default) | ✅ |
+| Panel: Voltage, Current, Signal Strength | ❌ | ✅ (disabled by default) |
 
 > [!WARNING]
-> Cloud data is **not real-time**. The per-panel series is published in **15-minute** slots and the
-> CCA→cloud upload happens every ~10–15 min, so values can lag by several minutes. The cloud source
-> therefore polls every **5 minutes by default** (minimum 120 s) to stay well under the API rate
-> limit — polling faster does **not** give fresher data.
+> Cloud data is **not real-time**. The CCA uploads to the cloud every ~10–15 min and panels report
+> sporadically, so values can lag by several minutes. Polling faster does **not** give fresher data.
 
-<img src="https://github.com/Bobsilvio/tigosolar-local/releases/download/v3.1.0/tigo-cloud-system.png" alt="Cloud system sensors" width="600"> <img src="https://github.com/Bobsilvio/tigosolar-local/releases/download/v3.1.0/tigo-cloud-panel.png" alt="Cloud per-panel sensors" width="600">
+### Migrating from tigosolar-online
+
+Both integrations use the same `tigo` folder, so **don't delete the Tigo integration** in
+*Settings → Devices & Services*: just swap the files and restart.
+
+1. **HACS → Tigo Energy (tigosolar-online) → ⋮ → Remove**.
+2. **HACS → ⋮ → Custom repositories** → add `https://github.com/Bobsilvio/tigosolar-local` (Integration),
+   then download **Tigo Energy** from it (or use the button in [HACS](#hacs)).
+3. **Restart Home Assistant.**
+
+The existing entry is migrated automatically to the Cloud source: same entities, same unique IDs,
+history and Energy Dashboard kept. Options (Premium, API version, intervals) are kept too.
+
+### Upgrading from tigosolar-local ≤ 3.1.x with the Cloud source
+
+The old Cloud source is replaced by the new engine and migrated automatically on restart:
+
+- **kept** (same entity, history preserved): system *Power*, *Today Production*, *Lifetime Production*
+  (now the monotonic Energy Dashboard counter), panel *Power* and *Reclaimed Power*;
+- **removed** (no equivalent in the new engine): *Power Peak Today*, *Week/Month/Year Production*,
+  *Reclaimed Today*, panel *Energy Today* — replaced by the per-panel lifetime *Energy* counter.
+
+CCA and ESP32 local sources are unchanged.
 
 ---
 

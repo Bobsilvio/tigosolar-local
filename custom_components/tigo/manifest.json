@@ -1,13 +1,20 @@
 {
   "domain": "tigo",
-  "name": "Tigo Local",
-  "codeowners": ["@Bobsilvio"],
+  "name": "Tigo Energy",
+  "codeowners": [
+    "@Bobsilvio",
+    "@TerryFrench"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/Bobsilvio/tigosolar-local/",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Bobsilvio/tigosolar-local/issues",
-  "loggers": ["tigo"],
-  "requirements": ["websocket-client>=1.6.0"],
-  "version": "3.1.1"
-} 
+  "loggers": [
+    "tigo"
+  ],
+  "requirements": [
+    "websocket-client>=1.6.0"
+  ],
+  "version": "4.0.0"
+}

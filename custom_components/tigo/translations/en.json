@@ -3,25 +3,35 @@
     "step": {
       "user": {
         "title": "Tigo Setup",
-        "description": "Enter the local IP of your Tigo CCA (e.g. 192.168.1.100). With firmware >= 4.0.4 you will be asked to sign in to your Tigo account.",
+        "description": "Choose the data source. **CCA** / **ESP32_WS**: enter the local IP (with CCA firmware >= 4.0.4 you will be asked to sign in to your Tigo account). **CLOUD**: Tigo cloud account, no IP needed.",
         "data": {
-          "ip_address": "IP Address",
+          "ip_address": "IP Address (not needed for CLOUD)",
           "source": "Source",
           "force_cloud": "Force cloud (for testing, ignore firmware)"
         }
       },
       "cloud": {
         "title": "Tigo account login",
-        "description": "{fw_info}",
+        "description": "Sign in with your Tigo account (same credentials as the Tigo app). Local firmware detected: {fw}.",
         "data": {
-          "username": "Email",
-          "password": "Password"
+          "email": "Email",
+          "password": "Password",
+          "premium": "I have a Tigo EI Premium subscription",
+          "api_version": "API version"
         }
       },
       "select_system": {
         "title": "Select system",
         "data": {
           "system_id": "System"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Tigo re-authentication",
+        "description": "The Tigo token expired or was rejected. Enter your credentials again.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
         }
       }
     },
@@ -32,7 +42,8 @@
       "no_systems": "No system found for this account."
     },
     "abort": {
-      "already_configured": "This system is already configured."
+      "already_configured": "This system is already configured.",
+      "reauth_successful": "Re-authentication successful."
     }
   },
   "options": {
@@ -42,15 +53,29 @@
         "data": {
           "ip_address": "IP Address",
           "source": "Source",
-          "username": "Email",
-          "password": "Password (leave empty to keep current)",
-          "scan_interval": "Update interval (seconds)"
+          "scan_interval": "Update interval (seconds)",
+          "api_version": "API version",
+          "premium": "Tigo EI Premium subscription",
+          "panel_scan_interval": "Panel read interval (seconds)",
+          "energy_poll_interval": "Energy read interval (seconds)",
+          "night_skip": "Skip reads at night",
+          "enable_voltage": "Create per-panel voltage sensors",
+          "enable_current": "Create per-panel current sensors",
+          "enable_rssi": "Create per-panel signal sensors",
+          "verbose_logging": "Verbose debug logging",
+          "probe_extra_hardware": "Probe & log extra hardware (inverters/meters/batteries) for diagnostics"
         }
       }
     },
     "error": {
       "invalid_ip": "Invalid IP address format.",
       "invalid_scan_interval": "Update interval out of range."
+    }
+  },
+  "issues": {
+    "api_unreachable": {
+      "title": "Tigo cloud unreachable",
+      "description": "The Tigo cloud API has not responded for a while. Data is paused and will resume automatically when the service recovers; the integration backs off and honors throttling."
     }
   }
 }

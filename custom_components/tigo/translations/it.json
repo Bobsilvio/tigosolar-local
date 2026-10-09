@@ -3,25 +3,35 @@
     "step": {
       "user": {
         "title": "Configurazione Tigo",
-        "description": "Inserisci l'indirizzo IP locale del tuo Tigo CCA (es. 192.168.1.100). Con firmware >= 4.0.4 verrà richiesto l'accesso all'account Tigo.",
+        "description": "Scegli la sorgente dati. **CCA** / **ESP32_WS**: inserisci l'IP locale (con firmware CCA >= 4.0.4 verrà richiesto l'accesso all'account Tigo). **CLOUD**: account cloud Tigo, IP non necessario.",
         "data": {
-          "ip_address": "Indirizzo IP",
+          "ip_address": "Indirizzo IP (non serve per CLOUD)",
           "source": "Sorgente",
           "force_cloud": "Forza cloud (per test, ignora il firmware)"
         }
       },
       "cloud": {
         "title": "Accesso account Tigo",
-        "description": "{fw_info}",
+        "description": "Accedi con il tuo account Tigo (le stesse credenziali dell'app Tigo). Firmware locale rilevato: {fw}.",
         "data": {
-          "username": "Email",
-          "password": "Password"
+          "email": "Email",
+          "password": "Password",
+          "premium": "Ho un abbonamento Tigo EI Premium",
+          "api_version": "Versione API"
         }
       },
       "select_system": {
         "title": "Seleziona impianto",
         "data": {
           "system_id": "Impianto"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Ri-autenticazione Tigo",
+        "description": "Il token Tigo è scaduto o è stato rifiutato. Inserisci di nuovo le credenziali.",
+        "data": {
+          "email": "Email",
+          "password": "Password"
         }
       }
     },
@@ -32,7 +42,8 @@
       "no_systems": "Nessun impianto trovato per questo account."
     },
     "abort": {
-      "already_configured": "Questo impianto è già configurato."
+      "already_configured": "Questo impianto è già configurato.",
+      "reauth_successful": "Ri-autenticazione riuscita."
     }
   },
   "options": {
@@ -42,15 +53,29 @@
         "data": {
           "ip_address": "Indirizzo IP",
           "source": "Sorgente",
-          "username": "Email",
-          "password": "Password (lascia vuoto per non cambiare)",
-          "scan_interval": "Intervallo di aggiornamento (secondi)"
+          "scan_interval": "Intervallo di aggiornamento (secondi)",
+          "api_version": "Versione API",
+          "premium": "Abbonamento Tigo EI Premium",
+          "panel_scan_interval": "Intervallo lettura pannelli (secondi)",
+          "energy_poll_interval": "Intervallo lettura energia (secondi)",
+          "night_skip": "Salta le letture di notte",
+          "enable_voltage": "Crea sensori di tensione per pannello",
+          "enable_current": "Crea sensori di corrente per pannello",
+          "enable_rssi": "Crea sensori di segnale per pannello",
+          "verbose_logging": "Log di debug dettagliato",
+          "probe_extra_hardware": "Sonda e registra hardware extra (inverter/contatori/batterie) per la diagnostica"
         }
       }
     },
     "error": {
       "invalid_ip": "Formato dell'indirizzo IP non valido.",
       "invalid_scan_interval": "Intervallo di aggiornamento fuori intervallo."
+    }
+  },
+  "issues": {
+    "api_unreachable": {
+      "title": "Cloud Tigo irraggiungibile",
+      "description": "L'API cloud Tigo non risponde da un po'. I dati sono in pausa e riprenderanno automaticamente al ripristino del servizio; l'integrazione applica backoff e rispetta eventuali limitazioni."
     }
   }
 }
