@@ -41,6 +41,15 @@ def _get_json(url: str, *, params: dict | None = None, timeout: float = 6.0) -> 
     except requests.exceptions.ReadTimeout:
         _log_throttled(f"readtimeout:{url}", logging.INFO, f"Tigo read-timeout su {url}: probabile standby notturno")
         return None
+    except requests.exceptions.ChunkedEncodingError as e:
+        # Il CCA chiude la connessione dopo pochi byte (IncompleteRead): succede
+        # con i firmware che bloccano l'accesso locale ai dati (>= 4.0.4).
+        _log_throttled(
+            "truncated", logging.WARNING,
+            f"Tigo: risposta troncata da {url} ({e}). Se il firmware del CCA è >= 4.0.4 "
+            "l'accesso locale non è più disponibile: riconfigura l'integrazione con la sorgente Cloud."
+        )
+        return None
     except requests.exceptions.ConnectionError as e:
         _log_throttled(f"connerr:{url}", logging.INFO, f"Tigo non raggiungibile ({e.__class__.__name__}): {url}")
         return None
