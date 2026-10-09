@@ -25,7 +25,6 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
-from functools import partial
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -72,7 +71,7 @@ async def _async_recorder_last_state(hass: HomeAssistant, entity_id: str):
     """Ultimo stato numerico registrato dal recorder (None se assente).
 
     Gli ultimi record possono essere ``unavailable``/vuoti (spegnimento,
-    ricaricamento): si scorrono gli ultimi 60 giorni dal più recente.
+    ricaricamento): si leggono gli ultimi 25 e si prende il numerico più recente.
     """
     try:
         from homeassistant.components.recorder import get_instance, history
@@ -82,20 +81,14 @@ async def _async_recorder_last_state(hass: HomeAssistant, entity_id: str):
         return None
     try:
         states = await get_instance(hass).async_add_executor_job(
-            partial(
-                history.state_changes_during_period,
-                hass,
-                dt_util.utcnow() - timedelta(days=60),
-                entity_id=entity_id,
-                descending=True,
-                limit=100,
-                include_start_time_state=False,
-            )
+            history.get_last_state_changes, hass, 25, entity_id
         )
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("Recorder lookup for %s failed: %s", entity_id, err)
         return None
-    for state in states.get(entity_id) or states.get(entity_id.lower()) or []:
+    found = states.get(entity_id) or states.get(entity_id.lower()) or []
+    # L'ordine restituito non è garantito: si ordina esplicitamente.
+    for state in sorted(found, key=lambda st: st.last_updated, reverse=True):
         if _as_float(state) is not None:
             return state
     return None
