@@ -6,9 +6,10 @@ Unmonitored inverters get a device for organization but no sensors.
 Default per-panel entities: Power + Energy. Voltage/Current/RSSI are created
 only when enabled in options (the coordinator also only fetches those then).
 
-Energy sensors expose ``today_kwh``: on startup the coordinator seeds its
-monotonic accumulators from their last stored state (before the first refresh)
-so the Energy Dashboard ``total_increasing`` series survives restarts.
+Energy sensors are RestoreSensor (so HA stores their state on shutdown) and
+expose ``today_kwh``: on startup the coordinator seeds its monotonic
+accumulators from the last stored state, before the first refresh, so the
+Energy Dashboard ``total_increasing`` series survives restarts.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 import logging
 
 from homeassistant.components.sensor import (
+    RestoreSensor,
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
@@ -188,7 +190,7 @@ class TigoSystemProductionToday(_Base):
         )
 
 
-class TigoSystemProduction(_Base):
+class TigoSystemProduction(_Base, RestoreSensor):
     """Monotonic lifetime kWh -> the Energy Dashboard 'Solar production' source."""
 
     _attr_name = "Production"
@@ -265,7 +267,7 @@ class TigoPanelSensor(CoordinatorEntity, SensorEntity):
         }
 
 
-class TigoPanelEnergy(CoordinatorEntity, SensorEntity):
+class TigoPanelEnergy(CoordinatorEntity, RestoreSensor):
     _attr_has_entity_name = True
     _attr_name = "Energy"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR

@@ -1,6 +1,9 @@
 {
   "domain": "tigo",
   "name": "Tigo Energy",
+  "after_dependencies": [
+    "recorder"
+  ],
   "codeowners": [
     "@Bobsilvio",
     "@TerryFrench"

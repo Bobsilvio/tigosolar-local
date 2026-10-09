@@ -25,6 +25,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
+from functools import partial
 from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -65,6 +66,46 @@ from .const import (
 from .topology import PanelMeta, Topology, build_topology
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def _async_recorder_last_state(hass: HomeAssistant, entity_id: str):
+    """Ultimo stato numerico registrato dal recorder (None se assente).
+
+    Gli ultimi record possono essere ``unavailable``/vuoti (spegnimento,
+    ricaricamento): si scorrono gli ultimi 60 giorni dal più recente.
+    """
+    try:
+        from homeassistant.components.recorder import get_instance, history
+    except ImportError:
+        return None
+    if "recorder" not in hass.config.components:
+        return None
+    try:
+        states = await get_instance(hass).async_add_executor_job(
+            partial(
+                history.state_changes_during_period,
+                hass,
+                dt_util.utcnow() - timedelta(days=60),
+                entity_id=entity_id,
+                descending=True,
+                limit=100,
+                include_start_time_state=False,
+            )
+        )
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Recorder lookup for %s failed: %s", entity_id, err)
+        return None
+    for state in states.get(entity_id) or states.get(entity_id.lower()) or []:
+        if _as_float(state) is not None:
+            return state
+    return None
+
+
+def _as_float(state) -> float | None:
+    try:
+        return float(state.state) if state is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass
@@ -615,25 +656,28 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
     # lifetime monotoni (Energy Dashboard) riprendono dall'ultimo valore
     # invece di ripartire dall'energia di oggi a ogni riavvio di HA.
     # ------------------------------------------------------------------ #
-    def seed_from_restore(self) -> None:
+    async def async_seed_from_restore(self) -> None:
         ent_reg = er.async_get(self.hass)
         stored = restore_state.async_get(self.hass).last_states
         today = dt_util.now().date()
 
-        def last(unique_id: str):
+        async def last(unique_id: str):
             entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
-            st = stored.get(entity_id) if entity_id else None
-            state = st.state if st else None
-            if state is None or state.state in ("unknown", "unavailable", ""):
+            if not entity_id:
                 return None, None
-            try:
-                value = float(state.state)
-            except (TypeError, ValueError):
+            st = stored.get(entity_id)
+            state = st.state if st else None
+            if _as_float(state) is None:
+                # Nessuno stato salvato valido (es. entità migrate da un sensore
+                # che non era RestoreEntity): ultimo valore dal recorder.
+                state = await _async_recorder_last_state(self.hass, entity_id)
+            value = _as_float(state)
+            if value is None:
                 return None, None
             same_day = dt_util.as_local(state.last_updated).date() == today
             return value, (state if same_day else None)
 
-        def today_of(state, fallback_uid: str | None = None) -> float | None:
+        def today_of(state) -> float | None:
             """kWh di oggi già inclusi nel lifetime salvato (None = ignoto)."""
             if state is None:
                 return 0.0  # salvato in un giorno precedente: oggi riparte da 0
@@ -642,24 +686,23 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
                     return float(state.attributes["today_kwh"])
                 except (TypeError, ValueError):
                     return None
-            if fallback_uid:
-                value, same = last(fallback_uid)
-                if value is not None and same is not None:
-                    return value
             return None
 
-        lifetime, state = last(f"tigo_{self.system_id}_production")
+        lifetime, state = await last(f"tigo_{self.system_id}_production")
         if lifetime is not None:
-            self._sys_energy.seed(
-                lifetime, today_of(state, f"tigo_{self.system_id}_production_today")
-            )
+            today_kwh = today_of(state)
+            if today_kwh is None and state is not None:
+                value, same = await last(f"tigo_{self.system_id}_production_today")
+                if value is not None and same is not None:
+                    today_kwh = value
+            self._sys_energy.seed(lifetime, today_kwh)
 
         for entry in er.async_entries_for_config_entry(ent_reg, self.entry.entry_id):
             uid = entry.unique_id or ""
             if entry.domain != "sensor" or not uid.endswith("_energy"):
                 continue
             object_id = uid[len("tigo_"):-len("_energy")]
-            lifetime, state = last(uid)
+            lifetime, state = await last(uid)
             if lifetime is not None:
                 self._panel_energy.setdefault(object_id, _EnergyState()).seed(
                     lifetime, today_of(state)

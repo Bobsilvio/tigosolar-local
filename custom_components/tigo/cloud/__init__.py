@@ -55,7 +55,7 @@ async def async_setup_cloud_entry(hass: HomeAssistant, entry: ConfigEntry) -> No
         raise ConfigEntryNotReady(f"Tigo setup failed: {err}") from err
 
     coordinator = TigoDataUpdateCoordinator(hass, entry, client, system_id)
-    coordinator.seed_from_restore()
+    await coordinator.async_seed_from_restore()
     await coordinator.async_config_entry_first_refresh()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
