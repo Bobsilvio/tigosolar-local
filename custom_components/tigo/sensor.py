@@ -69,6 +69,23 @@ PANEL_PROPERTIES = {
 }
 
 
+# HA depreca "via_device" (identificatori del device padre) a favore di "via_device_id"
+# (id del device nel registro): "via_device" smette di funzionare in HA 2027.8 (issue #37).
+# Le versioni HA precedenti rifiutano "via_device_id", quindi lo usiamo solo se il
+# DeviceInfo di questa versione lo prevede.
+_HAS_VIA_DEVICE_ID = "via_device_id" in dr.DeviceInfo.__optional_keys__
+
+
+def _link_to_system(entities: list, system_device: dr.DeviceEntry) -> None:
+    """Collega i device dei pannelli al device di sistema tramite via_device_id."""
+    if not _HAS_VIA_DEVICE_ID:
+        return
+    for entity in entities:
+        info = getattr(entity, "_attr_device_info", None)
+        if info and info.pop("via_device", None) is not None:
+            info["via_device_id"] = system_device.id
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     _LOGGER.debug("Setting up Tigo sensors")
 
@@ -276,6 +293,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
                 )
             )
 
+    _link_to_system(entities, system_device)
     async_add_entities(entities)
 
 class TigoPanelSensor(CoordinatorEntity, SensorEntity):
@@ -607,7 +625,7 @@ async def _setup_cloud_sensors(hass: HomeAssistant, entry: ConfigEntry, async_ad
     prefix = f"tigo_cloud_{system_id}"
 
     device_registry = dr.async_get(hass)
-    device_registry.async_get_or_create(
+    system_device = device_registry.async_get_or_create(
         config_entry_id=entry.entry_id,
         identifiers={(DOMAIN, f"{prefix}_system")},
         manufacturer="Tigo",
@@ -651,6 +669,7 @@ async def _setup_cloud_sensors(hass: HomeAssistant, entry: ConfigEntry, async_ad
         entities.append(TigoCloudPanelPower(coordinator, prefix, oid, merged))
         entities.append(TigoCloudPanelReclaimed(coordinator, prefix, oid, merged))
 
+    _link_to_system(entities, system_device)
     async_add_entities(entities)
 
 
