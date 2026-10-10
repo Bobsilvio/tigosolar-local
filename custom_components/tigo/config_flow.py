@@ -77,10 +77,6 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_FORCE_CLOUD, default=False): bool,
             }),
             errors=errors,
-            description_placeholders={
-                "ip_info": "Indirizzo IP locale del CCA/ESP32 (es. 192.168.1.100). "
-                           "Con firmware >= 4.0.4 verrà richiesto il login all'account Tigo."
-            },
         )
 
     async def async_step_cloud(self, user_input: dict[str, Any] | None = None) -> FlowResult:
@@ -119,10 +115,8 @@ class TigoConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_PASSWORD): str,
             }),
             errors=errors,
-            description_placeholders={
-                "fw_info": f"Firmware locale {fw} rilevato: dato locale protetto, uso l'account Tigo."
-                           if fw else "Dato locale non accessibile: accedi con l'account Tigo."
-            },
+            # Il testo sta nelle traduzioni: qui solo la versione firmware ("?" se non letta).
+            description_placeholders={"firmware": fw or "?"},
         )
 
     async def async_step_select_system(self, user_input: dict[str, Any] | None = None) -> FlowResult:

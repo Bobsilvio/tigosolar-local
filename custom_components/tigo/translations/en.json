@@ -12,7 +12,7 @@
       },
       "cloud": {
         "title": "Tigo account login",
-        "description": "{fw_info}",
+        "description": "Local data on the CCA is password-protected (firmware: {firmware}). Sign in with your Tigo account to read the system from the Tigo cloud instead.",
         "data": {
           "username": "Email",
           "password": "Password"

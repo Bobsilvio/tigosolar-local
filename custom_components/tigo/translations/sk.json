@@ -12,7 +12,7 @@
       },
       "cloud": {
         "title": "Prihlásenie do účtu Tigo",
-        "description": "{fw_info}",
+        "description": "Lokálne údaje z CCA sú chránené heslom (firmvér: {firmware}). Prihláste sa do účtu Tigo a údaje sa budú čítať z cloudu Tigo.",
         "data": {
           "username": "Email",
           "password": "Heslo"

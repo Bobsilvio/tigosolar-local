@@ -12,7 +12,7 @@
       },
       "cloud": {
         "title": "Accesso account Tigo",
-        "description": "{fw_info}",
+        "description": "Dato locale della CCA protetto da password (firmware: {firmware}). Accedi con l'account Tigo per leggere l'impianto dal cloud Tigo.",
         "data": {
           "username": "Email",
           "password": "Password"
