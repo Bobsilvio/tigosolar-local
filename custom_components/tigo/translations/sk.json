@@ -12,7 +12,7 @@
       },
       "cloud": {
         "title": "Prihlásenie do účtu Tigo",
-        "description": "Sign in with your Tigo account (same credentials as the Tigo app). Local firmware detected: {fw}.",
+        "description": "Prihláste sa do účtu Tigo (rovnaké prihlasovacie údaje ako v aplikácii Tigo). Zistený lokálny firmvér: {fw}.",
         "data": {
           "password": "Heslo",
           "email": "Email"
