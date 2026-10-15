@@ -19,5 +19,5 @@
   "requirements": [
     "websocket-client>=1.6.0"
   ],
-  "version": "4.0.0"
+  "version": "4.0.1"
 }
