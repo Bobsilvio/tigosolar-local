@@ -8,6 +8,7 @@ then surfaces ``TigoAuthError`` for the caller to map to a reauth flow.
 
 from __future__ import annotations
 
+import asyncio
 import email.utils
 import logging
 from collections.abc import Awaitable, Callable
@@ -22,6 +23,14 @@ _LOGGER = logging.getLogger(__name__)
 
 # Re-login this long before the stated token expiry.
 _EXPIRY_MARGIN = timedelta(days=1)
+
+# Per-request cap. HA's shared session has no useful default (aiohttp: 300 s
+# total), so one slow endpoint could stall a whole poll for minutes.
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=30)
+
+# Transport-level failures: aiohttp errors plus the timeout above, which is
+# raised as asyncio.TimeoutError rather than a ClientError.
+NETWORK_ERRORS = (aiohttp.ClientError, asyncio.TimeoutError)
 
 
 def _redact_url(url: str) -> str:

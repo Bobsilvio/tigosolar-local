@@ -14,6 +14,9 @@ Responsibilities:
   strict respect of throttling (429 / 503 + Retry-After). Surfaces health via
   ``last_update_success`` (a connectivity binary_sensor reads it) and raises a
   repair issue after a prolonged outage.
+* Per-endpoint tolerance: a transient failure (timeout / 5xx) of one endpoint
+  keeps that endpoint's last values instead of failing the whole update; the
+  update only fails when every endpoint called in the cycle failed.
 
 Not wired into setup yet -- the entity model (commit 8) consumes this and flips
 the integration from the v3 path to v4/auto.
@@ -65,6 +68,16 @@ from .const import (
 from .topology import PanelMeta, Topology, build_topology
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _is_transient(err: TigoApiError) -> bool:
+    """Timeout / network error / 5xx: worth skipping, not failing the update.
+
+    Auth and throttling keep their dedicated handling in the update loop.
+    """
+    if isinstance(err, (TigoAuthError, TigoThrottleError)):
+        return False
+    return err.status is None or err.status >= 500
 
 
 async def _async_recorder_last_state(hass: HomeAssistant, entity_id: str):
@@ -224,6 +237,9 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
         self._panel_energy: dict[str, _EnergyState] = {}
         self._last_energy_fetch = 0.0
         self._disabled_metrics: set[str] = set()
+        # Per-cycle endpoint bookkeeping (see _do_update).
+        self._calls_ok = 0
+        self._soft_errors: list[str] = []
 
         super().__init__(
             hass,
@@ -360,6 +376,8 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
             self._meta.current_date = date_str
 
         night = self._is_night(now)
+        self._calls_ok = 0
+        self._soft_errors = []
 
         # --- per-minute telemetry ---
         if not night:
@@ -373,8 +391,17 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
             or self._last_energy_fetch == 0.0
             or night  # ensure a final capture after sunset / after midnight
         ):
-            await self._fetch_energy(date_str)
-            self._last_energy_fetch = time.monotonic()
+            if await self._fetch_energy(date_str):
+                self._last_energy_fetch = time.monotonic()
+
+        if self._soft_errors:
+            if not self._calls_ok:
+                # Nothing answered: a real outage -> backoff + UpdateFailed.
+                raise TigoApiError("; ".join(self._soft_errors))
+            _LOGGER.warning(
+                "Tigo partial update, keeping last values for: %s",
+                "; ".join(self._soft_errors),
+            )
 
         return self._build_result()
 
@@ -444,7 +471,14 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
                         break
                     if err.status in (404, 422):
                         break  # absent for this account; ignore quietly
-                    raise
+                    if not _is_transient(err):
+                        raise
+                    self._soft_errors.append(f"{metric}: {err}")
+                    if metric == METRIC_PIN:
+                        # Cadence unknown: skip the other metrics this cycle.
+                        advanced = False
+                    break
+                self._calls_ok += 1
                 last_data = payload.get("lastData")
                 if metric == METRIC_PIN:
                     advanced = last_data != self._meta.last_lastdata
@@ -588,13 +622,18 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
                 val = None
             self._panel_vals.setdefault(meta.equipment_id, {})[metric] = val
 
-    async def _fetch_energy(self, date_str: str) -> None:
+    async def _fetch_energy(self, date_str: str) -> bool:
+        """Fetch daily energy; False on a transient failure (retry next cycle)."""
         try:
             agg = await self.client.get_agg_energy(self.system_id, date_str)
         except TigoApiError as err:
             if err.status in (403, 404, 422):
-                return
-            raise
+                return True
+            if not _is_transient(err):
+                raise
+            self._soft_errors.append(f"energy: {err}")
+            return False
+        self._calls_ok += 1
         ds = agg.get("dataset") or {}
         for obj_id, wh in ds.items():
             st = self._panel_energy.setdefault(str(obj_id), _EnergyState())

@@ -18,7 +18,13 @@ from typing import Any
 
 import aiohttp
 
-from .base import BaseTigoClient, log_raw, parse_retry_after
+from .base import (
+    NETWORK_ERRORS,
+    REQUEST_TIMEOUT,
+    BaseTigoClient,
+    log_raw,
+    parse_retry_after,
+)
 from .errors import TigoApiError, TigoAuthError, TigoThrottleError
 
 _LOGGER = logging.getLogger(__name__)
@@ -79,7 +85,7 @@ class TigoV4Client(BaseTigoClient):
             hdrs.setdefault("Accept", "application/json")
         try:
             async with self._session.request(
-                method, url, headers=hdrs, json=json
+                method, url, headers=hdrs, json=json, timeout=REQUEST_TIMEOUT
             ) as resp:
                 body = await resp.text()
                 if resp.status == 401:
@@ -111,9 +117,9 @@ class TigoV4Client(BaseTigoClient):
                     ) from err
                 log_raw(f"{method} (v4)", url, parsed)
                 return parsed
-        except aiohttp.ClientError as err:
+        except NETWORK_ERRORS as err:
             raise TigoApiError(
-                f"Tigo v4 request failed: {method} {url}: {err}"
+                f"Tigo v4 request failed: {method} {url}: {err!r}"
             ) from err
 
     # ------------------------------------------------------------------ #
@@ -127,14 +133,15 @@ class TigoV4Client(BaseTigoClient):
                 url,
                 json={"username": email, "password": password},
                 headers={"Accept": "application/json"},
+                timeout=REQUEST_TIMEOUT,
             ) as resp:
                 if resp.status in (401, 403):
                     raise TigoAuthError("Tigo login failed: invalid credentials")
                 if resp.status != 200:
                     raise TigoApiError(f"Tigo login error {resp.status}")
                 data = await resp.json(content_type=None)
-        except aiohttp.ClientError as err:
-            raise TigoApiError(f"Tigo login request failed: {err}") from err
+        except NETWORK_ERRORS as err:
+            raise TigoApiError(f"Tigo login request failed: {err!r}") from err
 
         user = data.get("user") if isinstance(data, dict) else None
         if not user or "auth" not in user:
@@ -264,11 +271,11 @@ class TigoV4Client(BaseTigoClient):
         for name, url in endpoints.items():
             try:
                 async with self._session.get(
-                    url, headers=self._auth_headers
+                    url, headers=self._auth_headers, timeout=REQUEST_TIMEOUT
                 ) as resp:
                     body = await resp.text()
                     status = resp.status
-            except aiohttp.ClientError as err:
+            except NETWORK_ERRORS as err:
                 result[name] = {"status": None, "error": str(err)}
                 log_raw(f"PROBE {name}", url, f"<error {err}>")
                 continue

@@ -17,7 +17,7 @@ from typing import Any
 
 import aiohttp
 
-from .base import BaseTigoClient
+from .base import NETWORK_ERRORS, REQUEST_TIMEOUT, BaseTigoClient
 from .errors import TigoApiError, TigoAuthError
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,29 +86,33 @@ class TigoV3Client(BaseTigoClient):
 
     async def _get_json(self, url: str, *, headers: dict[str, str] | None = None) -> Any:
         try:
-            async with self._session.get(url, headers=headers) as resp:
+            async with self._session.get(
+                url, headers=headers, timeout=REQUEST_TIMEOUT
+            ) as resp:
                 if resp.status == 401:
                     raise TigoAuthError(f"Tigo API unauthorized: GET {url}")
                 if resp.status != 200:
                     raise TigoApiError(f"Tigo API error {resp.status}: GET {url}")
                 return await resp.json(content_type=None)
-        except aiohttp.ClientError as err:
-            raise TigoApiError(f"Tigo API request failed: GET {url}: {err}") from err
+        except NETWORK_ERRORS as err:
+            raise TigoApiError(f"Tigo API request failed: GET {url}: {err!r}") from err
 
     async def _do_login(self, email: str, password: str) -> str:
         """HTTP Basic-auth login; stores and returns the bearer token."""
         url = f"{API_BASE_URL}/users/login"
         try:
             async with self._session.get(
-                url, auth=aiohttp.BasicAuth(email, password)
+                url,
+                auth=aiohttp.BasicAuth(email, password),
+                timeout=REQUEST_TIMEOUT,
             ) as resp:
                 if resp.status in (401, 403):
                     raise TigoAuthError("Tigo login failed: invalid credentials")
                 if resp.status != 200:
                     raise TigoApiError(f"Tigo login error {resp.status}")
                 data = await resp.json(content_type=None)
-        except aiohttp.ClientError as err:
-            raise TigoApiError(f"Tigo login request failed: {err}") from err
+        except NETWORK_ERRORS as err:
+            raise TigoApiError(f"Tigo login request failed: {err!r}") from err
 
         try:
             self.token = data["user"]["auth"]
@@ -195,7 +199,9 @@ class TigoV3Client(BaseTigoClient):
         )
         try:
             async with self._session.get(
-                url, headers={"Authorization": f"Bearer {self.token}"}
+                url,
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=REQUEST_TIMEOUT,
             ) as resp:
                 if resp.status == 401:
                     raise TigoAuthError(f"Tigo v3 unauthorized [{param}]")
@@ -205,8 +211,8 @@ class TigoV3Client(BaseTigoClient):
                         status=resp.status,
                     )
                 text = await resp.text()
-        except aiohttp.ClientError as err:
-            raise TigoApiError(f"Tigo v3 request failed [{param}]: {err}") from err
+        except NETWORK_ERRORS as err:
+            raise TigoApiError(f"Tigo v3 request failed [{param}]: {err!r}") from err
         return parse_param_csv(text, param, latest_only=True)
 
     async def get_panel_summary(
@@ -283,7 +289,9 @@ class TigoV3Client(BaseTigoClient):
             _LOGGER.debug("Fetching v3 param %s: %s", param, url)
             try:
                 async with self._session.get(
-                    url, headers={"Authorization": f"Bearer {self.token}"}
+                    url,
+                    headers={"Authorization": f"Bearer {self.token}"},
+                    timeout=REQUEST_TIMEOUT,
                 ) as resp:
                     if resp.status == 401:
                         raise TigoAuthError(f"Tigo API unauthorized [{param}]")
@@ -292,8 +300,8 @@ class TigoV3Client(BaseTigoClient):
                             f"Tigo API error [{param}]: {resp.status}"
                         )
                     text = await resp.text()
-            except aiohttp.ClientError as err:
-                raise TigoApiError(f"Tigo API request failed [{param}]: {err}") from err
+            except NETWORK_ERRORS as err:
+                raise TigoApiError(f"Tigo API request failed [{param}]: {err!r}") from err
 
             for panel_id, value in parse_param_csv(
                 text, param, latest_only=True
