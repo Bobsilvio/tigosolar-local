@@ -1,6 +1,6 @@
 {
   "name": "tigosolar",
-  "version": "4.0.1",
+  "version": "4.0.2",
   "description": "Home Assistant custom integration for Tigo Energy solar monitoring",
   "main": "sensor.py",
   "repository": {

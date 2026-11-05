@@ -690,14 +690,19 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
     # ------------------------------------------------------------------ #
     async def async_seed_from_restore(self) -> None:
         ent_reg = er.async_get(self.hass)
-        stored = restore_state.async_get(self.hass).last_states
+        restore_data = restore_state.async_get(self.hass)
+        if hasattr(restore_data, "async_get_stored_state"):
+            # HA >= 2026.11: last_states removed, states indexed by registry id.
+            get_stored = restore_data.async_get_stored_state
+        else:
+            get_stored = restore_data.last_states.get
         today = dt_util.now().date()
 
         async def last(unique_id: str):
             entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
             if not entity_id:
                 return None, None
-            st = stored.get(entity_id)
+            st = get_stored(entity_id)
             state = st.state if st else None
             if _as_float(state) is None:
                 # Nessuno stato salvato valido (es. entità migrate da un sensore
