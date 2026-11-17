@@ -15,7 +15,8 @@ from homeassistant.util import dt as dt_util
 import calendar
 
 from .compat import link_via_device
-from .const import DOMAIN, SOURCE_CLOUD, _LOGGER
+from .const import DOMAIN, SOURCE_CLOUD, SOURCE_ESP, _LOGGER
+from .esp_ids import adopt_short_ids, is_long_address
 from .tigo_api import fetch_tigo_data_from_ip, fetch_tigo_layout_from_ip, fetch_daily_energy, fetch_device_info
 
 from homeassistant.const import (
@@ -140,6 +141,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     source = getattr(coordinator, "data_source", entry.data.get("source", "CCA"))
     energy_entities_by_panel = {}
 
+    if source == SOURCE_ESP:
+        # Move entities created on the short node ID to the optimizer long address
+        adopt_short_ids(hass, entry, cca_prefix, panel_data)
+
     for panel_id, data in panel_data.items():
         if not isinstance(data, dict):
             continue
@@ -151,7 +156,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         if source == "ESP32_WS" and not layout_info:
             # Usa il nome pannello dal WS se disponibile, altrimenti addr senza zeri iniziali
             ws_panel_name = data.get("PanelName")
-            display_label = ws_panel_name or panel_id.lstrip("0") or panel_id
+            short = data.get("Addr") or panel_id
+            display_label = ws_panel_name or short.lstrip("0") or short
             layout_info = {
                 "serial": data.get("Barcode") or panel_id,
                 "channel": data.get("Addr") or "unknown",
@@ -283,6 +289,38 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
     link_via_device(entities, system_device.id)
     async_add_entities(entities)
+
+    if source == SOURCE_ESP:
+        _watch_new_esp_panels(hass, entry, coordinator, set(panel_data))
+
+
+# Minimum time between two automatic reloads triggered by new ESP32 panels
+_ESP_RELOAD_MIN_INTERVAL = timedelta(minutes=10)
+# entry_id -> time of the last automatic reload; module level so it survives reloads
+_esp_last_reload: dict[str, datetime] = {}
+
+
+def _watch_new_esp_panels(hass: HomeAssistant, entry: ConfigEntry, coordinator, known: set) -> None:
+    """Reload the entry when the ESP32 reports a long address with no entities yet.
+
+    Entities are created at setup only. A panel appears later when the ESP32 learns
+    its long address, or when setup ran with no data (CCA asleep at night); a reload
+    creates its entities and adopts the ones still keyed on the short node ID.
+    """
+    def _on_update() -> None:
+        data = coordinator.data or {}
+        new = [pid for pid in data if pid not in known and is_long_address(pid)]
+        if not new:
+            return
+        now = dt_util.utcnow()
+        last = _esp_last_reload.get(entry.entry_id)
+        if last and now - last < _ESP_RELOAD_MIN_INTERVAL:
+            return
+        _esp_last_reload[entry.entry_id] = now
+        _LOGGER.info("Tigo ESP32: new panels %s, reloading to create their sensors", ", ".join(new))
+        hass.async_create_task(hass.config_entries.async_reload(entry.entry_id))
+
+    entry.async_on_unload(coordinator.async_add_listener(_on_update))
 
 class TigoPanelSensor(CoordinatorEntity, SensorEntity):
     def __init__(

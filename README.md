@@ -164,7 +164,9 @@ Panel <label> <parameter>
 - `<label>` → for **CCA**: the panel label from the layout (e.g. `A2`, `B1`); for **ESP32**: the `panel` field from the WebSocket (e.g. `A1`, `B6`), or the `addr` if no name is assigned yet (e.g. `001B`)
 - `<parameter>` → `Power`, `Voltage`, `Current`, `Temperature`, `Signal Strength`, `Energy`, `Energy Day`, `Energy Month`
 
-The **unique_id** (internal, never changes) is based on source + IP + `addr`/panel_id, so renaming a panel on the ESP32 later updates only the display name — **no new entity is created, history is preserved**.
+The **unique_id** (internal, never changes) is based on source + IP + panel id, so renaming a panel on the ESP32 later updates only the display name — **no new entity is created, history is preserved**.
+
+For **ESP32** the panel id is the optimizer's **long address** (64-bit, fixed in hardware), not the short `addr`: the CCA can reassign short addresses after a rediscovery, which used to move history to another panel. Entities created by older versions on the short `addr` are moved to the long address automatically at startup, keeping their `entity_id` and history. A panel whose long address the ESP32 has not learned yet appears as soon as it is known (the integration reloads itself); an ESP32 that knows no long address at all keeps working on the short `addr`.
 
 **Examples:**
 

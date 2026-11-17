@@ -8,6 +8,7 @@ import websocket
 import json
 from requests.adapters import HTTPAdapter
 from .const import AUTH_HEADER, FIRMWARE_CLOUD_MIN, _LOGGER
+from .esp_ids import long_address
 
 _session: requests.Session | None = None
 
@@ -71,14 +72,24 @@ def fetch_tigo_data_from_ws(ws_url: str) -> dict:
         _log_throttled(f"ws:{ws_url}", logging.INFO, f"Errore WS fetch: {e}")
         return {}
 
+    modules = [m for m in (data_list or []) if isinstance(m, dict)]
+    # Key panels on the optimizer long address: the short "addr" is assigned by the CCA
+    # and can move to another panel after a rediscovery. Once the ESP32 knows any long
+    # address, panels it has not mapped yet are skipped (they show up as soon as it
+    # learns them) instead of being created a second time under their short addr.
+    long_of = {id(m): long_address(m.get("longaddr")) or long_address(m.get("barcode")) for m in modules}
+    any_long = any(long_of.values())
+
     panel_data = {}
-    for mod in data_list or []:
+    for mod in modules:
         barcode = mod.get("barcode") or None
         addr = mod.get("addr") or None
         generic_id = mod.get("id")
-        # Usa addr come ID primario (stabile), poi generic_id, infine barcode
-        # barcode può apparire e scomparire causando nomi entità instabili
-        panel_id = addr or generic_id or barcode
+        if any_long:
+            panel_id = long_of[id(mod)]
+        else:
+            # No long address known yet (fresh ESP32): legacy keying on addr
+            panel_id = addr or generic_id or barcode
         if not panel_id:
             continue
         panel_name = mod.get("panel") or None
