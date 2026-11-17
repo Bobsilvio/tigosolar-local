@@ -88,7 +88,8 @@ def fetch_tigo_data_from_ws(ws_url: str) -> dict:
             "Vout": mod.get("vout", 0),
             "Iin": mod.get("amp", 0),
             "Temp": mod.get("temp", 0),
-            "Rssi": -abs(mod.get("rssi", 0)) if mod.get("rssi") else 0,
+            # RS485 frames carry a raw 0-255 link indicator (higher = better), not dBm
+            "Rssi": mod.get("rssi", 0) or 0,
             "Addr": addr,
             "Barcode": barcode,
             "GenericID": generic_id,

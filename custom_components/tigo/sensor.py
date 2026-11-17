@@ -165,6 +165,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             if param == "Temp" and source != "ESP32_WS":
                 continue
             if param in data:
+                if param == "Rssi" and source == "ESP32_WS":
+                    # ESP32 exposes the raw 0-255 RSSI byte: no dBm unit
+                    prop = {**prop, "native_unit_of_measurement": None}
                 entities.append(
                     TigoPanelSensor(
                         coordinator,
