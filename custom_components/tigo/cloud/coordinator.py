@@ -3,9 +3,9 @@
 Responsibilities:
 
 * Incremental per-minute fetch: the summary endpoint returns the whole day's
-  1440-minute array every call; we only emit values for minutes newer than the
-  last processed one, and carry previous values forward otherwise (no history
-  spam).
+  1440-minute array every call. We retain each panel's source-row timestamp
+  and stop publishing its carried-forward value once it is older than the
+  telemetry freshness window.
 * Day rollover (local/system tz): finalize energy, reset per-minute/per-day
   baselines, refresh system info (sunrise/sunset/premium/features).
 * Night / CCA-cadence skips: don't hammer the API when the sun is down or when
@@ -233,6 +233,13 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
         self._meta = _RuntimeMeta()
         self._backoff = _Backoff()
         self._panel_vals: dict[str, dict[str, float | None]] = {}
+        # Timestamp of the latest genuine API row for each panel/metric.
+        # Values are local-time-aware datetimes, not coordinator poll times.
+        self._panel_metric_times: dict[str, dict[str, datetime]] = {}
+        # Tigo cloud telemetry normally arrives in roughly 10-15 minute slots.
+        # Allow a little tolerance, then stop presenting a carried-forward
+        # value as if it were a current panel reading.
+        self._telemetry_max_age = timedelta(minutes=20)
         self._sys_energy = _EnergyState()
         self._panel_energy: dict[str, _EnergyState] = {}
         self._last_energy_fetch = 0.0
@@ -252,7 +259,8 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
     # helpers
     # ------------------------------------------------------------------ #
     def _now(self) -> datetime:
-        return datetime.now(self._meta.tz) if self._meta.tz else datetime.now()
+        now = dt_util.now()
+        return now.astimezone(self._meta.tz) if self._meta.tz else now
 
     async def _refresh_system_info(self, today: date) -> None:
         info = await self.client.get_system_info(
@@ -394,6 +402,10 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
             if await self._fetch_energy(date_str):
                 self._last_energy_fetch = time.monotonic()
 
+        # Expire old panel measurements even when the API returned no new
+        # rows, or telemetry polling was skipped overnight.
+        self._expire_stale_telemetry(now)
+
         if self._soft_errors:
             if not self._calls_ok:
                 # Nothing answered: a real outage -> backoff + UpdateFailed.
@@ -483,7 +495,7 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
                 if metric == METRIC_PIN:
                     advanced = last_data != self._meta.last_lastdata
                     self._meta.last_lastdata = last_data
-                self._apply_summary(metric, payload)
+                self._apply_summary(metric, payload, date_str)
 
     def _debug_summary_shape(self, metric: str, ds0: dict) -> None:
         """Compact DEBUG dump of the summary d[] layout vs. the topology.
@@ -573,7 +585,8 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
             )
         return dict(self.topology.by_index)
 
-    def _apply_summary(self, metric: str, payload: dict) -> None:
+    def _apply_summary(self, metric: str, payload: dict, date_str: str) -> None:
+        """Apply the latest genuine per-panel readings and retain their timestamps."""
         dataset = payload.get("dataset") or []
         if not dataset:
             return
@@ -585,18 +598,9 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
         # Column -> panel via the payload's ground-truth order (issue #8).
         col_map = self._summary_column_map(ds0)
 
-        # Per-panel-column latest-valid selection (issue #7). The old code
-        # picked ONE newest row where *any* column was non-dash, then mapped
-        # its whole d[]. But the trailing CCA/aggregate columns are non-dash in
-        # every minute of the day -- including night and not-yet-reached
-        # minutes -- so "newest such row" always walked to the end-of-day row,
-        # where the per-panel columns are still "-", collapsing every panel to
-        # null. This is the same failure the v2.0.1 changelog fixed for the v3
-        # CSV path, unfixed here.
-        #
-        # Fix: scan every row and, per panel column, keep the highest-minute
-        # non-dash value. Only panel columns (col_map) are considered, so the
-        # always-fresh aggregate columns can't hijack selection.
+        # Keep the latest populated minute independently for every panel.
+        # The timestamp is the source row time, NOT the time Home Assistant
+        # happened to poll the cloud API.
         latest: dict[int, tuple[int, Any]] = {}
         for row in rows:
             mi = self._minute_index(row.get("t", ""))
@@ -612,15 +616,46 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
                 prev = latest.get(idx)
                 if prev is None or mi > prev[0]:
                     latest[idx] = (mi, raw)
+
         if not latest:
-            return  # nothing populated yet today -> carry forward
-        for idx, (_mi, raw) in latest.items():
+            return  # no new usable row; freshness is checked separately
+
+        tz = self._meta.tz or dt_util.now().tzinfo
+        reading_date = date.fromisoformat(date_str)
+        for idx, (mi, raw) in latest.items():
             meta = col_map[idx]
             try:
                 val = round(float(raw), 2)
             except (TypeError, ValueError):
                 val = None
+
+            reading_time = datetime.fromisoformat(
+                f"{reading_date.isoformat()}T{mi // 60:02d}:{mi % 60:02d}:00"
+            ).replace(tzinfo=tz)
+
             self._panel_vals.setdefault(meta.equipment_id, {})[metric] = val
+            self._panel_metric_times.setdefault(meta.equipment_id, {})[metric] = reading_time
+
+    def _expire_stale_telemetry(self, now: datetime) -> None:
+        """Remove telemetry values whose source row is older than the freshness limit."""
+        for equipment_id, metrics in self._panel_vals.items():
+            timestamps = self._panel_metric_times.get(equipment_id, {})
+            for metric in list(metrics):
+                reading_time = timestamps.get(metric)
+                if reading_time is None:
+                    # A value without a source timestamp cannot safely be
+                    # represented as a current live measurement.
+                    metrics[metric] = None
+                    continue
+
+                # Protect against a timezone mismatch in unusual older data.
+                if reading_time.tzinfo is None and now.tzinfo is not None:
+                    reading_time = reading_time.replace(tzinfo=now.tzinfo)
+                elif reading_time.tzinfo is not None and now.tzinfo is None:
+                    reading_time = reading_time.replace(tzinfo=None)
+
+                if now - reading_time > self._telemetry_max_age:
+                    metrics[metric] = None
 
     async def _fetch_energy(self, date_str: str) -> bool:
         """Fetch daily energy; False on a transient failure (retry next cycle)."""
