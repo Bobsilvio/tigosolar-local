@@ -239,7 +239,7 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
         # Tigo cloud telemetry normally arrives in roughly 10-15 minute slots.
         # Allow a little tolerance, then stop presenting a carried-forward
         # value as if it were a current panel reading.
-        self._telemetry_max_age = timedelta(minutes=20)
+        self._telemetry_max_age = timedelta(minutes=25)
         self._sys_energy = _EnergyState()
         self._panel_energy: dict[str, _EnergyState] = {}
         self._last_energy_fetch = 0.0
