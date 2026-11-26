@@ -69,6 +69,12 @@ from .topology import PanelMeta, Topology, build_topology
 
 _LOGGER = logging.getLogger(__name__)
 
+# Tigo CCA telemetry is normally uploaded every 10-15 minutes. Allow four
+# 15-minute intervals to accommodate additional publication delay in the cloud.
+TELEMETRY_UPLOAD_INTERVAL = timedelta(minutes=15)
+TELEMETRY_MAX_MISSED_UPLOADS = 4
+TELEMETRY_MAX_AGE = TELEMETRY_UPLOAD_INTERVAL * TELEMETRY_MAX_MISSED_UPLOADS
+
 
 def _is_transient(err: TigoApiError) -> bool:
     """Timeout / network error / 5xx: worth skipping, not failing the update.
@@ -236,10 +242,8 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
         # Timestamp of the latest genuine API row for each panel/metric.
         # Values are local-time-aware datetimes, not coordinator poll times.
         self._panel_metric_times: dict[str, dict[str, datetime]] = {}
-        # Tigo cloud telemetry normally arrives in roughly 10-15 minute slots.
-        # Allow a little tolerance, then stop presenting a carried-forward
-        # value as if it were a current panel reading.
-        self._telemetry_max_age = timedelta(minutes=25)
+        # Derived from the observed CCA upload cadence (see constants above).
+        self._telemetry_max_age = TELEMETRY_MAX_AGE
         self._sys_energy = _EnergyState()
         self._panel_energy: dict[str, _EnergyState] = {}
         self._last_energy_fetch = 0.0
@@ -643,9 +647,8 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
             for metric in list(metrics):
                 reading_time = timestamps.get(metric)
                 if reading_time is None:
-                    # A value without a source timestamp cannot safely be
-                    # represented as a current live measurement.
-                    metrics[metric] = None
+                    # Without a source timestamp, freshness cannot be
+                    # determined. Leave the existing value untouched.
                     continue
 
                 # Protect against a timezone mismatch in unusual older data.
@@ -688,11 +691,13 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
         assert self.topology is not None
         panels: dict[str, dict[str, Any]] = {}
         sys_power = 0.0
+        has_fresh_pin = False
         for meta in self.topology.panels:
             vals = dict(self._panel_vals.get(meta.equipment_id, {}))
             pin = vals.get(METRIC_PIN)
             if isinstance(pin, (int, float)):
                 sys_power += pin
+                has_fresh_pin = True
             est = (
                 self._panel_energy.get(meta.object_id)
                 if meta.object_id
@@ -705,7 +710,7 @@ class TigoDataUpdateCoordinator(DataUpdateCoordinator):
         return {
             "panels": panels,
             "system": {
-                "power_w": round(sys_power, 2),
+                "power_w": round(sys_power, 2) if has_fresh_pin else None,
                 "lifetime_energy_kwh": self._sys_energy.lifetime_kwh,
                 "today_energy_kwh": self._sys_energy.today_kwh,
             },
